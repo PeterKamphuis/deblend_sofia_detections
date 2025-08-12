@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "package_name"
+version = "0.0.0"
+description = "Development Status :: unfinished"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.6"
+authors = [
+    { name = "P. Kamphuis", email = "peterkamphuisastronomy@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+    "future-fstrings",
+    "psutil",
+    "omegaconf",
+]
+
+[project.urls]
+Homepage = "https://github.com/PeterKamphuis/package_name"
+
+[project.scripts]
+sofia2hdf5 = "package_name.main:main"
+
+#!/usr/bin/env python
+
+
+
