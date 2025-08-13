@@ -1,9 +1,14 @@
-# Package Name
+# deblend_sofia_detections
 
 =====
 
 Introduction
 ------------
+    A small package to deblend Sofia detections based on the method described in 
+    https://ui.adsabs.harvard.edu/abs/2025ApJ...980..157H/abstract
+
+    Most of this is an adapted copy of the accompanying ipython notebook of that paper 
+    and as such Qifeng Huang should be considered as a main author of this code
 
 
 
@@ -11,10 +16,8 @@ Requirements
 ------------
 The code requires full installation of:
 
-    python v3.6 or higher
+    python v3.8 or higher
     
-
-
 [python](https://www.python.org/)
 
 
@@ -23,38 +26,36 @@ Installation
 
 Download the source code from the Github or simply install with pip as:
 
-  	pip install packagename
+  	pip install deblend_sofia_detections
 
 This should also install all required python dependencies.
 We recommend the use of python virtual environments. If so desired a TRM_errors installation would look like:
 
-  	python3 -m venv package_name_venv
+  	python3 -m venv deblend_sofia_detections_venv
 
-  	source package_name_venv/bin/activate.csh
+  	source deblend_sofia_detections_venv/bin/activate.csh
 
-    pip install package_name
+    pip install deblend_sofia_detections
+(In case of bash the correct middle line is source deblend_sofia_detections_venv/bin/activate)
 
-(In case of bash the correct middle line is 	source package_name_venv/bin/activate)
-You might have to restart the env:
+You might have to resource the env:
 
-  	deactivate
+  	source deblend_sofia_detections_venv/bin/activate.csh
 
-  	source package_name_venv/bin/activate.csh
+Once you have installed FAT you can check that it has been installed properly by running deblend_sofia_detections as.
 
-Once you have installed FAT you can check that it has been installed properly by running FAT as.
-
-  	executable -v 
+  	deblend -v 
 
 
-Running package_name_venv
+Running deblend_sofia_detections_venv
 ------------------
 
-You can run package_name by providing a configuration file by 
+You can run deblend_sofia_detectionsby providing a configuration file by 
 
-executable configuration_file=file.yml
+deblend configuration_file=file.yml
 
 an example yaml file with all parameters can be printed by running
 
-executable print_examples=true 
+deblend print_examples=true 
 
 please see the advanced input in readthe docs for an explanation of all parameters.

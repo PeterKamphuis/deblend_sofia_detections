@@ -1,0 +1,154 @@
+# List of template parameter settings for SoFiA
+#
+# Note that SoFiA's default parameters are actually hard-coded in the
+# file Parameter.c, and any changes to this file will have no effect.
+# This file can instead be used as a template for setting up your own
+# parameter files.
+
+
+# Global settings
+
+pipeline.verbose           =  false
+pipeline.pedantic          =  true
+pipeline.threads           =  0
+
+
+# Input
+
+input.data                 =  
+input.region               =  
+input.gain                 =  
+input.noise                =  
+input.weights              =  
+input.mask                 =  
+input.invert               =  false
+
+
+# Flagging
+
+flag.region                =  
+flag.catalog               =  
+flag.radius                =  5
+flag.auto                  =  false
+flag.threshold             =  5.0
+flag.log                   =  false
+
+
+# Continuum subtraction
+
+contsub.enable             =  false
+contsub.order              =  0
+contsub.threshold          =  2.0
+contsub.shift              =  4
+contsub.padding            =  3
+
+
+# Noise scaling
+
+scaleNoise.enable          =  true
+scaleNoise.mode            =  spectral
+scaleNoise.statistic       =  mad
+scaleNoise.fluxRange       =  full
+scaleNoise.windowXY        =  27
+scaleNoise.windowZ         =  17
+scaleNoise.gridXY          =  0
+scaleNoise.gridZ           =  0
+scaleNoise.interpolate     =  false
+scaleNoise.scfind          =  false
+
+
+# Ripple filter
+
+rippleFilter.enable        =  false
+rippleFilter.statistic     =  median
+rippleFilter.windowXY      =  31
+rippleFilter.windowZ       =  15
+rippleFilter.gridXY        =  0
+rippleFilter.gridZ         =  0
+rippleFilter.interpolate   =  false
+
+
+# S+C finder
+
+scfind.enable              =  true
+scfind.kernelsXY           =  0, 1, 3
+scfind.kernelsZ            =  0, 1, 3
+scfind.threshold           =  4.0      
+scfind.replacement         =  5.0
+scfind.statistic           =  mad
+scfind.fluxRange           =  full
+
+
+# Threshold finder
+
+threshold.enable           =  false
+threshold.threshold        =  5.0
+threshold.mode             =  relative
+threshold.statistic        =  mad
+threshold.fluxRange        =  negative
+
+
+# Linker
+
+linker.enable              =  true
+linker.radiusXY            =  2
+linker.radiusZ             =  0
+linker.minSizeXY           =  2
+linker.minSizeZ            =  2
+linker.maxSizeXY           =  0
+linker.maxSizeZ            =  0
+linker.minPixels           =  0
+linker.maxPixels           =  0
+linker.minFill             =  0.0
+linker.maxFill             =  0.0
+linker.positivity          =  false
+linker.keepNegative        =  false
+
+
+# Reliability
+
+reliability.enable         =  true
+reliability.parameters     =  peak, sum, mean
+reliability.threshold      =  1.0                #This is diffferent from Kamphuis 2022
+reliability.scaleKernel    =  0.3
+reliability.minSNR         =  5.7  # print(26.9/np.sqrt(beamarea/(abs(hdr['CDELT1'])*abs(hdr['CDELT
+reliability.minPixels      =  0
+reliability.catalog        =  
+reliability.plot           =  true
+reliability.debug          =  false
+
+
+# Mask dilation
+
+dilation.enable            =  true
+dilation.iterationsXY      =  3
+dilation.iterationsZ       =  0
+dilation.threshold         =  0.02
+
+
+# Parameterisation
+
+parameter.enable           =  true
+parameter.wcs              =  true
+parameter.physical         =  true
+parameter.prefix           =  SoFiA
+parameter.offset           =  true
+
+
+# Output
+
+output.directory           =  
+output.filename            =  
+output.writeCatASCII       =  true
+output.writeCatXML         =  true
+output.writeCatSQL         =  false
+output.writeNoise          =  false
+output.writeFiltered       =  false
+output.writeMask           =  true
+output.writeMask2d         =  false
+output.writeRawMask        =  false
+output.writeMoments        =  true
+output.writeCubelets       =  true
+output.marginCubelets      =  10
+output.thresholdMom12      =  0.0
+output.overwrite           =  true
