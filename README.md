@@ -16,7 +16,7 @@ Requirements
 ------------
 The code requires full installation of:
 
-    python v3.8 or higher
+    python v3.11 or higher
     
 [python](https://www.python.org/)
 
@@ -42,7 +42,7 @@ You might have to resource the env:
 
   	source deblend_sofia_detections_venv/bin/activate.csh
 
-Once you have installed FAT you can check that it has been installed properly by running deblend_sofia_detections as.
+Once you have installed deblend_sofia_detections you can check that it has been installed properly by running deblend_sofia_detections as.
 
   	deblend -v 
 

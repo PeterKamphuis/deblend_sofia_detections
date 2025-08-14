@@ -1,7 +1,10 @@
-Welcome to TRM_errors' documentation!
+Welcome to 'deblend-sofia-detections' documentation!
 =================================
-**TRM_errors** is a python implementation of the various methods to construct legit errors for tilted ring models.
+**deblend-sofia-detections** is a python package implementation and enhanced version of 
+the watershed methods published in https://ui.adsabs.harvard.edu/abs/2025ApJ...980..157H/abstract
 
+This started as an adapted copy of the accompanying ipython notebook of that paper and evolved from there
+and as such Qifeng Huang deserves credit for the original implementation.
 
 Contents
 --------
@@ -10,5 +13,5 @@ Contents
 
 
   Introduction, Installation & Easy use <readme.md>
-  The Package Explanations <Advanced.rst>
+  The yaml File Input <Advanced.rst>
   Copyright <license.rst>
