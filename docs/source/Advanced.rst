@@ -1,8 +1,9 @@
-.
-deblend-sofia-detections' yaml file documentation!
+The  deblend-sofia-detections' yaml file documentation!
 ======================================
+
 Introduction 
 ----------------
+
 deblend-sofia-detections really only requires the sofia run input .par file 
 It should then automatically check all detections and download the necessary optical images.
 However there are a few more optional input parameters that can be specified in the .yml file to customize the behavior of the package.
