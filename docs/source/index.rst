@@ -13,5 +13,5 @@ Contents
 
 
   Introduction, Installation & Easy use <readme.md>
-  The Package Explanations <Advanced.rst>
+  The yaml File Input <Advanced.rst>
   Copyright <license.rst>
