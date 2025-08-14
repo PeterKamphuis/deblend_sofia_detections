@@ -4,7 +4,7 @@ from deblend_sofia_detections.support.errors import InputError,SofiaError
 from deblend_sofia_detections.support.support_functions import \
     convert_pix_columns_to_arcsec,translate_string_to_unit,get_source_cat_name,\
     get_start_end_locations,convert_pixel_values_to_original
-from deblend_sofia_detections.support.system_functions import convert_ps
+from deblend_sofia_detections.support.system_functions import convert_ps,join_path
 
 try:
     from importlib.resources import open_text as pack_open_txt
@@ -324,9 +324,8 @@ probably no sources were found.''')
     sources = load_sofia_catalogue(table_name,verbose=cfg.general.verbose,
             no_conversion=no_conversion,variables= req_variables) 
     if not no_conversion:
-        if cfg.internal.data_cube is None:
-            raise InputError('cubename must be specified if no_conversion is True')
-        sources = convert_pix_columns_to_arcsec(cfg,sources,f'{cfg.internal.data_directory}/{cfg.internal.data_cube}')
+        sources = convert_pix_columns_to_arcsec(cfg,sources,
+            f'{sofia_directory}/{sofia_basename}_mask.fits')
 
     return sources,sofia_basename,table_name
 
@@ -405,7 +404,8 @@ def read_sofia_txt(filename,variables=None,verbose=False):
 
 def rerun_sofia(cfg):
     #First get the original input
-    sofia_temp = load_sofia_input_file(cfg.internal.sofia_parameter_file)
+    sofia_temp = load_sofia_input_file(join_path(
+        cfg.internal.sofia_parameter_path,cfg.internal.sofia_parameter_file))
     sofia_temp['input.mask'] = f'{cfg.internal.sofia_directory}/{cfg.internal.sofia_basename}_mask.fits'
     sofia_temp['scfind.enable'] = 'false'
     sofia_temp['reliability.enable'] = 'false'  # This has to be off else it crashes on no negative sources

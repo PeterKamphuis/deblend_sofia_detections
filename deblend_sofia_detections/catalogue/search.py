@@ -189,8 +189,8 @@ def search_counter_part(cfg,source,sofia_directory= './',
         elif query.upper() == 'MANUAL':
             manual_table = read_manual_table(cfg,need_velocity=False)
             # Add the difference columns 
-            add_units = [u.deg, u.km/u.s, u.dimensionless_unscaled]
-            for i,col in enumerate(['Spatial Diff','Velocity Diff','Combined Diff']):
+            add_units = [u.km/u.s,u.deg, u.km/u.s, u.dimensionless_unscaled]
+            for i,col in enumerate(['Velocity','Spatial Diff','Velocity Diff','Combined Diff']):
                 if col not in manual_table.colnames:
                     manual_table.add_column(np.nan,name=col)
                     manual_table[col].unit = add_units[i]
