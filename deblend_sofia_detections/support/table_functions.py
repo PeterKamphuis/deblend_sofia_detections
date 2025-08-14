@@ -2,6 +2,7 @@ from deblend_sofia_detections.support.errors import TableError,InputError
 from deblend_sofia_detections.support.support_functions import\
     is_real_unit, isquantity
 
+from astropy import units as u
 from astropy.table import QTable,Table,Row
 
 import copy

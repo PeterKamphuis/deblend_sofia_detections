@@ -295,7 +295,7 @@ def obtain_sofia_id(base_name, cube_name):
     tmp,cube_file = os.path.split(cube_name)
     split_main = cube_file.split(base_name)
     parts = split_main[1].split('_')
-    id  = int(parts[1])
+    id  = parts[1]
     return id,cube_file
 
 def read_sofia_table(cfg,sofia_directory='./',sofia_basename=None,
@@ -402,6 +402,18 @@ def read_sofia_txt(filename,variables=None,verbose=False):
                         * convert_units[i])
         sources.add_row(construct_row)
     return sources
+
+def rerun_sofia(cfg):
+    #First get the original input
+    sofia_temp = load_sofia_input_file(cfg.internal.sofia_parameter_file)
+    sofia_temp['input.mask'] = f'{cfg.internal.sofia_directory}/{cfg.internal.sofia_basename}_mask.fits'
+    sofia_temp['scfind.enable'] = 'false'
+    sofia_temp['reliability.enable'] = 'false'  # This has to be off else it crashes on no negative sources
+    sofia_temp['linker.enable'] = 'false'
+    sofia_temp['dilation.enable'] = 'false'
+    write_sofia(sofia_temp,f'{cfg.internal.sofia_parameter_path}/deblend_sofia.par')
+    execute_sofia(cfg,run_directory=cfg.internal.sofia_parameter_path,
+        sofia_parameter_file='deblend_sofia.par')
 
 def set_sofia(sofia_temp, cube_name, mask, outdir):
     """

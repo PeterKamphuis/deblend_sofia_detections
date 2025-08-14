@@ -1,11 +1,12 @@
 from deblend_sofia_detections.catalogue.search import \
     search_counter_part
-from deblend_sofia_detections.config.functions import setup_config
+
 from deblend_sofia_detections.deblending.sofia_functions import \
     load_sofia_input_file,set_sofia,write_sofia,read_sofia_table,\
     execute_sofia
 from deblend_sofia_detections.support.system_functions import \
     create_directory
+
 
 from astropy.convolution import convolve,Gaussian1DKernel
 from astropy.coordinates import SkyCoord
@@ -55,6 +56,20 @@ def cut_optical(hdr_over,wcs,dir,image):
         optical_cutout = None
     optical_image.close()
     return optical_cutout
+
+def add_to_original(original_data, cut_data,sofia_id = 1):
+    original_wcs = WCS(original_data[0].header)
+    cut_wcs = WCS(cut_data[0].header)
+    cut_origin = cut_wcs.wcs_pix2world(1,1,1,1)
+    original_coord = original_wcs.wcs_world2pix(*cut_origin,1.)
+    expanded_new = np.zeros_like(original_data[0].data)
+
+    expanded_new[int(original_coord[2]):int(original_coord[2])+cut_data[0].data.shape[0],
+              int(original_coord[1]):int(original_coord[1])+cut_data[0].data.shape[1],
+              int(original_coord[0]):int(original_coord[0])+cut_data[0].data.shape[2]] = cut_data[0].data
+    original_data[0].data[original_data[0].data == int(sofia_id)] = 0
+    original_data[0].data[expanded_new > 0] = expanded_new[expanded_new > 0]
+    return original_data
 
 def freq_smooth(cube, bin_size=0, smooth=0):
     '''

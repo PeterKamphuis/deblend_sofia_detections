@@ -11,7 +11,6 @@ from scipy.ndimage import map_coordinates
 import astropy.units as u
 import copy
 import numpy as np
-import os
 import re
 
 
@@ -31,6 +30,7 @@ def calculate_projected_distance(coord1,coord2,no_PA=False):
         projected_PA=360.*u.deg-projected_PA
   
     return separation,projected_PA.to(u.deg)
+
 
 
 def convert_pix_columns_to_arcsec(cfg,table,file):

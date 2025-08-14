@@ -57,3 +57,6 @@ def convert_ps(image):
     'Convert a ps file to a png file.'
     base = os.path.splitext(image)[0]
     os.system(f'gs -dSAFER -dEPSCrop -r300 -sDEVICE=jpeg -o {base}.png {image}')
+
+def join_path(*args):
+    return os.path.normpath(os.path.join(*args))

@@ -1,6 +1,6 @@
 from deblend_sofia_detections.config.config import defaults
 from deblend_sofia_detections.support.errors import InputError
-from deblend_sofia_detections.support.system_functions import create_directory
+from deblend_sofia_detections.support.system_functions import join_path
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
 from omegaconf import OmegaConf
 
@@ -79,10 +79,20 @@ configuration_file = ''')
 
 
 def directory_check(cfg):
+    
 
+    if cfg.general.verbose:
+        print(f'''Checking directories:
+              {cfg.internal.data_directory}
+              {cfg.internal.sofia_directory}
+              {cfg.internal.run_directory}
+              ''')
+  
     for test_dir in [cfg.internal.data_directory, cfg.internal.sofia_directory, cfg.internal.run_directory]:
+      
         if not os.path.isdir(test_dir):
             raise InputError(f'''The directory {test_dir} does not exist.''')
+    
     return cfg
 
 
@@ -91,20 +101,25 @@ def read_parameter_input(cfg):
     parameters = load_sofia_input_file(cfg.input.sofia_parameters)
     input_pathname,parameter_file = os.path.split(cfg.input.sofia_parameters)
     cfg.internal.sofia_parameter_file = parameter_file
+   
     if input_pathname == '' or input_pathname[0] != '/':
-        input_pathname = os.path.join(os.getcwd(),input_pathname)
+        input_pathname = join_path(os.getcwd(),input_pathname)
+    cfg.internal.sofia_parameter_path = input_pathname
     data_path,data_file = os.path.split(parameters['input.data'])
+  
     if data_path == '' or data_path[0] != '/':
-        cfg.internal.data_directory = f'{input_pathname}{data_path}'
+        cfg.internal.data_directory = join_path(
+            input_pathname,data_path)
     else:
-        cfg.internal.data_directory = data_path
-    cfg.internal.ancillary_directory = f'{cfg.internal.data_directory}/ancillary_data'
+        cfg.internal.data_directory = join_path(data_path)
+   
+    cfg.internal.ancillary_directory = join_path(cfg.internal.data_directory,'ancillary_data')
     cfg.internal.data_cube = data_file
     cfg.internal.sofia_basename = parameters['output.filename']
     if cfg.internal.sofia_basename == '':
         cfg.internal.sofia_basename = os.path.splitext(data_file)[0]
     cfg.internal.sofia_directory = parameters['output.directory']
     if cfg.internal.sofia_directory == '' or cfg.internal.sofia_directory[0] != '/':
-        cfg.internal.sofia_directory = os.path.join(input_pathname,cfg.internal.sofia_directory)
+        cfg.internal.sofia_directory = join_path(input_pathname,cfg.internal.sofia_directory)
     
     return cfg

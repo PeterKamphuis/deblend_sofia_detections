@@ -3,10 +3,10 @@
 from deblend_sofia_detections.catalogue.download import download_full_FOV_optical
 from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
-    mask_source_from_table
+    mask_source_from_table,add_to_original
 from deblend_sofia_detections.deblending.peak_handling import find_peaks
 from deblend_sofia_detections.deblending.sofia_functions import read_sofia_table,\
-    obtain_sofia_id,update_sofia_catalogue
+    obtain_sofia_id, rerun_sofia
 from deblend_sofia_detections.support.system_functions import create_directory
 from deblend_sofia_detections.support.support_functions import match_size
 
@@ -16,7 +16,7 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.wcs import WCS
 
 from skimage.segmentation import watershed
-from photutils.segmentation import detect_threshold, detect_sources, deblend_sources, make_2dgaussian_kernel
+from photutils.segmentation import detect_threshold, detect_sources,  make_2dgaussian_kernel
 
 
 import astropy.units as u
@@ -462,19 +462,20 @@ def deblend_sofia_detections(cfg):
             print(f"Downloading the full FOV optical image for {cfg.internal.data_cube}.")
         download_full_FOV_optical(cfg)
     cubelets_dir = f'{cfg.internal.sofia_directory}/{sofia_basename}_cubelets/'
-
+    max_source_id_original = np.max([int(x) for x in sources['id']])
+    max_source_id = copy.deepcopy(max_source_id_original)
     for id in sources['id']:
-        id = int(id)
-        watershed_deblending(cfg,
+        max_source_id = watershed_deblending(cfg,
                         cube_name=f"{cubelets_dir}{sofia_basename}_{id}_cube.fits",
                         mask_name=f"{cubelets_dir}{sofia_basename}_{id}_mask.fits",
                         optical_name=f"{cfg.internal.data_directory}/ancillary_data/moment0_full_DSS.fits",
                         mom0_name=f"{cubelets_dir}{sofia_basename}_{id}_mom0.fits",
                         peak_deblending=True,optical_deblending= True,
-                        main_name = cfg.internal.data_cube,
-                        two_dim_deblending=True,
+                        two_dim_deblending=True, max_source_id=max_source_id,
                         cfg_in=cfg)
-        
+    
+    if max_source_id > max_source_id_original:
+        rerun_sofia(cfg)    
 def detect_optical_sources(optical_image, optical_wcs
         ,cfg=None,base_dir='',mask=None,outdir='./',hdr=None,subtract = True):
     
@@ -686,15 +687,26 @@ def run_watershed(mom0_ext, markers2d,use_extend=False, cfg = None):
     if cfg.general.verbose:
         print(f"Found {no_source} sources in run_watershed.\n")
     return segments
+def update_original_mask(cfg, original_mask_name=None,final_mask_name=None, id=None):
+    if original_mask_name is not None:
+        original_mask = fits.open(original_mask_name)
+        final_mask = fits.open(final_mask_name)
+        original_mask_data = add_to_original(original_mask,final_mask,sofia_id=id)
 
+        # Update the original mask with the new segmentation
+     
+        print(f'Writing the mask {original_mask_name}')
+        original_mask.writeto(original_mask_name, overwrite=True)
+        
 
 def watershed_deblending(cfg, name = None, cube_name = None, 
                          mask_name=None, optical_name=None, 
                          mom0_name=None,base_dir= '',
                          source_table=None, two_dim_deblending= False,
                          optical_deblending=False, cfg_in = None,
+                         max_source_id = 1,
                          peak_deblending = True,
-                         main_name=None):
+                         ):
     
     cfg = copy.deepcopy(cfg_in) #Making sure to avoid feedback
     """
@@ -778,14 +790,20 @@ def watershed_deblending(cfg, name = None, cube_name = None,
         print(f'Which is based on the following deblending results: {results}')
     simple_copy = False
     if not final_mask_name is None:  
-        os.system(f'cp {final_mask_name} {outdir}utilized_mask.fits')
        
         stil_split = split_sources(cfg,cube_name, final_mask_name, outdir=outdir)  # skip the background
         # If we are running as a larger sofia run update the catalogue and cubelets
         if not cfg is None and stil_split:
-            update_sofia_catalogue(cfg,cube_name=cube_name,
-                base_name=cfg.internal.sofia_basename,
-                outdir=outdir,base_dir=base_dir,) 
+            max_source_id =create_final_mask(cfg, input_mask_name=final_mask_name,
+                              max_source_id=max_source_id,
+                              sofia_source_id=sofia_id,
+                              outdir=outdir)
+            update_original_mask(cfg, original_mask_name=
+                f'{cfg.internal.sofia_directory}/{cfg.internal.sofia_basename}_mask.fits',
+                final_mask_name = f'{outdir}utilized_mask.fits',id = sofia_id)
+            #update_sofia_catalogue(cfg,cube_name=cube_name,
+            #    base_name=cfg.internal.sofia_basename,
+            #    outdir=outdir,base_dir=base_dir,) 
         else:
             simple_copy = True
     else:
@@ -797,7 +815,35 @@ Copying Watershed directory to Watershed_Output_{sofia_id} in {cfg.internal.sofi
         newname = f'{cfg.internal.sofia_directory}/{cfg.internal.sofia_basename}_cubelets/Watershed_Output_{sofia_id}/'
         shutil.rmtree(newname) if os.path.exists(newname) else None
         os.rename(outdir, newname)
+    return max_source_id
 #@profile
 
+def create_final_mask(cfg, input_mask_name=None, max_source_id=1, sofia_source_id=1,
+                      outdir='./'):
+    """ Create the final mask for the deblended sources."""
+    if input_mask_name is not None:
+        input_mask = fits.open(input_mask_name)
+        ids_in_mask = [int(x) for x in np.unique(input_mask[0].data) if int(x) != 0]
+       
+        print(f'Found {len(ids_in_mask)} unique IDs in the input mask.')
+        translate_ids_to_all = {}
+        if int(sofia_source_id) in ids_in_mask:
+            translate_ids_to_all[f'{int(sofia_source_id)}'] = int(sofia_source_id)
+            skip_id = int(sofia_source_id)
+        else:
+            translate_ids_to_all[f'{np.min(ids_in_mask)}'] = int(sofia_source_id)
+            skip_id = int(np.min(ids_in_mask))
+        print(f'Skipping ID: {skip_id}')
+       
+        for id in ids_in_mask:
+            if id != skip_id:
+                max_source_id += 1
+                translate_ids_to_all[f'{id}'] = max_source_id
+        print(f' translation: {translate_ids_to_all}')
 
-#
+        for id in translate_ids_to_all:
+            input_mask[0].data[input_mask[0].data == int(id)] = translate_ids_to_all[id]
+        input_mask[0].data = input_mask[0].data.astype(np.int32)
+        input_mask.writeto(f"{outdir}utilized_mask.fits",overwrite=True)
+
+    return max_source_id

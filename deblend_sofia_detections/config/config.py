@@ -36,6 +36,7 @@ class Internal:
     sofia_catalogue: str = MISSING
     sofia_directory: str = MISSING
     sofia_parameter_file: str = MISSING
+    sofia_parameter_path: str = MISSING
     sofia_basename: str = MISSING
   
     #font_file: str = "/usr/share/fonts/truetype/msttcorefonts/Times_New_Roman.ttf"
