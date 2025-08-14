@@ -2,7 +2,7 @@
 #Functions that look for optical image
 
 from deblend_sofia_detections.deblending.image_manipulation import cut_optical
-
+from deblend_sofia_detections.support.errors import DownloadError
 from astropy import units as u
 from astropy.io import fits
 from astroquery.skyview import SkyView
@@ -34,8 +34,8 @@ def download_full_FOV_optical(cfg):
     beam = mom0_header['BMAJ'] * u.deg
     optical_pixel_scale = beam.to(u.arcsec).value/cfg.general.optical_pixel_scale * u.arcsec
     #If the resolution of our optical images is greater than 5 the deblending becomes hairy 
-    if optical_pixel_scale > 5.*u.arcsec:
-        optical_pixel_scale = 5. * u.arcsec
+    if optical_pixel_scale > 4.*u.arcsec:
+        optical_pixel_scale = 4. * u.arcsec
     size_pixels = (size_quantity.to(u.arcsec).value/optical_pixel_scale.value).astype(int)
     #obtain the central coordinates
     ra,dec = mom0_wcs.wcs_pix2world(mom0_header['NAXIS1']/2., mom0_header['NAXIS2']/2.,1.)
@@ -92,3 +92,7 @@ This can take a while.''')
             os.system(f'mv {filename} {cfg.internal.ancillary_directory}/moment0_full_DSS.fits')
         else:
             print("Failed to obtain the image from SkyView")
+            raise DownloadError(f'''Failed to download the image from SkyView: {path}
+Check your internet connection and the SkyView service status.
+Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.
+''')

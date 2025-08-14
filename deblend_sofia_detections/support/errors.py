@@ -1,3 +1,6 @@
+class DownloadError(Exception):
+    '''Custom exception for download errors'''
+    pass
 class InputError(Exception):
     '''Custom exception for input errors'''
     pass

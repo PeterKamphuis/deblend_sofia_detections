@@ -13,10 +13,10 @@ import subprocess
 def report_version():
     # Distutils standard  way to do version numbering
     try:
-        __version__ = version("package_name")
+        __version__ = version("deblend_sofia_detections")
     except:
-        __version__ = "dev"
-    
+        __version__ = "devel"
+
     # perhaps we are in a github with tags; in that case return describe
     path = os.path.dirname(os.path.abspath(__file__))
     try:

@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools >= 61.0"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project]
 name = "deblend_sofia_detections"
@@ -34,7 +34,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/PeterKamphuis/package_name"
+Homepage = "https://github.com/PeterKamphuis/deblend_sofia_detections"
 
 [project.scripts]
 deblend = "deblend_sofia_detections.main:main"
@@ -42,12 +42,11 @@ deblend = "deblend_sofia_detections.main:main"
 [tool.hatch.version]
 path = "version.py"
 
-[tool.hatch.build.targets.sdist]
+[tool.hatch.build]
 include = [
     "/deblend_sofia_detections",
+    "/deblend_sofia_detections/deblend_sofia_detections/template/*.par",
 ]
-
-#!/usr/bin/env python
 
 
 
