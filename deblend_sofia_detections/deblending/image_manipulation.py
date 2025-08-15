@@ -60,10 +60,10 @@ def cut_optical(hdr_over,wcs,dir,image):
 def add_to_original(original_data, cut_data,sofia_id = 1):
     original_wcs = WCS(original_data[0].header)
     cut_wcs = WCS(cut_data[0].header)
-    cut_origin = cut_wcs.wcs_pix2world(1,1,1,1)
+    cut_origin = cut_wcs.wcs_pix2world(0,0,0,1)
     original_coord = original_wcs.wcs_world2pix(*cut_origin,1.)
     expanded_new = np.zeros_like(original_data[0].data)
-
+    print(original_coord[1],cut_data[0].header['NAXIS2'],original_data[0].header['NAXIS2'])
     expanded_new[int(original_coord[2]):int(original_coord[2])+cut_data[0].data.shape[0],
               int(original_coord[1]):int(original_coord[1])+cut_data[0].data.shape[1],
               int(original_coord[0]):int(original_coord[0])+cut_data[0].data.shape[2]] = cut_data[0].data
