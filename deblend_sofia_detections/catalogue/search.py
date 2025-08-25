@@ -235,6 +235,8 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
                          ])*header_info['pixelsize']
     else:
         raise InputError(f'We dont know what to do with {counterpart_region} for counterpart_region')
+    if f'{pref}ell_maj' in source.colnames:
+        radius = np.max([source[f'{pref}_ell_maj'].to(u.deg)*0.1,radius])
     return vsys, radius
 
 
