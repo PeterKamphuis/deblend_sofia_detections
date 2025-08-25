@@ -319,6 +319,7 @@ probably no sources were found.''')
         return None,sofia_basename,None
     req_variables = ['name','f_sum','err_f_sum','id','ell3s_maj',
         'ell3s_min','w20','ra','dec','v_sofia','kin_pa','x','y','z',
+        'x_min','x_max','y_min','y_max',
         'f_max','ell_maj','ell_min','rms','ell_pa']
 
     sources = load_sofia_catalogue(table_name,verbose=cfg.general.verbose,

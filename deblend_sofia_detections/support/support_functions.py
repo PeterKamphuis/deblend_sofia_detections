@@ -40,7 +40,8 @@ def convert_pix_columns_to_arcsec(cfg,table,file):
     for col in table.colnames:
         if table[col].unit == u.pix and not col[0] in ['x','y','z'] and \
             not col[-1] in ['x','y','z'] :
-            table[col] = table[col]*pixsize
+            table[col] = (table[col]*pixsize).to(u.deg)
+           
     return table
 
 def convert_pixel_values_to_original(intable, cube_file_name,original_cube):

@@ -107,9 +107,12 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
     if cfg.input.manual_input_tables[0] is None:
         return  QTable()
     manual_table = read_manual_table(cfg)
+
     coordinates = [source['sofia_ra'][0],source['sofia_dec'][0]]
+    
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
         counterpart_region=cfg.general.counterpart_region)
+  
     search_table = sort_on_distance(manual_table, coordinates,vsys)
     if cfg.general.verbose:
         print(f'Searching for manual counterpart for {source["sofia_id"][0]}')
@@ -117,10 +120,12 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
         print(f' The nearest target is {search_table["Name"][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}')
         print(f'And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}')
    
+  
     # if we have set a range of velocities we mask all that that are outside the range
     if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
        search_table['Velocity Diff'][0] > sysrange:
        search_table = QTable()
+   
     return search_table
    
 
@@ -223,20 +228,29 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
     if not sysrange is None:
         vsys = source[pref+'v_sofia'].to(u.km/u.s) #systemic in km/s
             
+    radius = header_info['BMAJ']/2.
     if counterpart_region.lower() in ['beam']:
-        radius = header_info['BMAJ']/2.
+        pass
     elif counterpart_region.lower() in ['3beam']:
         radius = header_info['BMAJ']*3./2.
     elif counterpart_region.lower() in ['box']:
-        radius = np.max([source[pref+'x'].value-source[pref+'x_min'].value,\
+        radius = np.nanmax([np.nanmax([source[pref+'x'].value-source[pref+'x_min'].value,\
                          source[pref+'x_max'].value-source[pref+'x'].value,
                          source[pref+'y'].value-source[pref+'y_min'].value,
                          source[pref+'y_max'].value-source[pref+'y'].value
-                         ])*header_info['pixelsize']
+                         ])*header_info['pixelsize'],radius])
+    elif counterpart_region.lower() in ['ellipse']:
+        if f'{pref}ell_maj' in source.colnames:
+            radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value*0.1),
+                                float(radius.to(u.deg).value)])*u.deg
+    elif counterpart_region.lower() in ['full_ellipse']:
+        if f'{pref}ell_maj' in source.colnames:
+            radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value),
+                                float(radius.to(u.deg).value)])*u.deg
     else:
         raise InputError(f'We dont know what to do with {counterpart_region} for counterpart_region')
-    if f'{pref}ell_maj' in source.colnames:
-        radius = np.max([source[f'{pref}_ell_maj'].to(u.deg)*0.1,radius])
+
+  
     return vsys, radius
 
 

@@ -64,7 +64,8 @@ General Keywords
 
 **counterpart_region**: 
 
-  *str, optional, default = 'Beam'*
+  *str, optional, default = 'Ellipse'*
 
   The region to use for finding counterparts. The options are 'Beam', the size of the HI beam,
-  '3Beam', three times the size of the HI beam, or 'Box', the rectangular region around the source.
+  '3Beam', three times the size of the HI beam, 'Box', the rectangular region around the source, 'Ellipse',
+  10% of the ellipse major axis  as fitted by sofia, or 'Full_Ellipse', the full ellipse as fitted by sofia. The minimum size is the beam.
