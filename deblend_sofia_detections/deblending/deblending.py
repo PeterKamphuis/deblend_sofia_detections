@@ -438,6 +438,8 @@ def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
     
     return result
 
+fn=open('profiler_logs/deblend_sofia_detections.log','w+')
+@profile(stream=fn)
 def deblend_sofia_detections(cfg):
     """
     Deblend all sources in the given data cube.

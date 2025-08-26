@@ -15,7 +15,7 @@ import sys
 import traceback
 import warnings
 from multiprocessing import get_context,Manager
-
+from memory_profiler import profile
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
     log = file if hasattr(file,'write') else sys.stderr
     traceback.print_stack(file=log)
@@ -23,6 +23,8 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 
 
 
+fz=open('profiler_logs/deblend_main_with_input_cubes.log','w+')
+@profile(stream=fz)
 def main_with_input(argv):
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
