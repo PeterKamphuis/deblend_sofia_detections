@@ -17,7 +17,7 @@ from astropy.wcs import WCS
 
 from skimage.segmentation import watershed
 from photutils.segmentation import detect_threshold, detect_sources,  make_2dgaussian_kernel
-
+from memory_profiler import profile
 
 import astropy.units as u
 import copy
