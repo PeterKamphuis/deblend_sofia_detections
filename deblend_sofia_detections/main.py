@@ -28,6 +28,7 @@ fz=open('profiler_logs/deblend_main_with_input_cubes.log','w+')
 def main_with_input(argv):
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
+    del cfg
 
 
 def main():
@@ -35,6 +36,7 @@ def main():
     '''Set up the configuration as input by the user'''
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
+    del cfg
     # for some dumb reason pools have to be called from main
     # !!!!!!!!Starts your Main Here
 if __name__ =="__main__":

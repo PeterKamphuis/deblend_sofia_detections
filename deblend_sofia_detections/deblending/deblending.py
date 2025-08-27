@@ -24,7 +24,7 @@ import copy
 import numpy as np
 import os
 import shutil
-
+import gc
 # -*- coding: future_fstrings -*-
 
 
@@ -477,7 +477,12 @@ def deblend_sofia_detections(cfg):
                         cfg_in=cfg)
     
     if max_source_id > max_source_id_original:
-        rerun_sofia(cfg)    
+        rerun_sofia(cfg)  
+    del max_source_id
+    del max_source_id_original
+    del sources
+    del sofia_basename
+    gc.collect()  
 def detect_optical_sources(optical_image, optical_wcs
         ,cfg=None,base_dir='',mask=None,outdir='./',hdr=None,subtract = True):
     
