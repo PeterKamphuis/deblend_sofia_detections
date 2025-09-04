@@ -1,13 +1,17 @@
 
 
+from time import time
 from deblend_sofia_detections import report_version
 
 from astropy.table import QTable
 from astropy.io import fits
 
 from multiprocessing import get_context
-
+from itertools import islice
 import numpy as np
+import datetime
+
+from scipy.ndimage import maximum_filter
 
 def filter_peaks(maxima, border_width = None,npeaks=np.inf,
         previous_deblend=None):
@@ -55,13 +59,20 @@ def filter_peaks(maxima, border_width = None,npeaks=np.inf,
   
     return table
 
-
+def chunked_iterable(iterable, size):
+    """Yield successive chunks from iterable of given size."""
+    it = iter(iterable)
+    while True:
+        chunk = list(islice(it, size))
+        if not chunk:
+            break
+        yield chunk
 
 
 def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
                border_width=None, npeaks=np.inf, previous_deblend=None,
                num_processes=6,outdir='./',cube_header=None):
-    local_maxima = []
+    
     shape = data.shape
     print(f'Data shape {shape}')
     #maskd the data if a mask is present
@@ -71,17 +82,59 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
     boxside = np.array(np.ceil(np.array(box_size) / 2.0),dtype=int)
     box = np.array([[boxside[0]-1, boxside[0]], [boxside[1]-1,boxside[1]], 
                     [boxside[2]-1,boxside[2]]],dtype=int)
-   
+    print(f'doing local maxima detection with {num_processes} processes')
+    print(f'box size {box_size}, box {box}')
+    #start_time = datetime.datetime.now()
+    #print(f'start at {start_time}')
+    #local_maxima = np.full(shape, False)
+    #args_iter = ((data[z-box[0,0]:z+box[0,1], y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
+    #            threshold[z,y,x],box)
+    #            for z in range(0+box[0,0], shape[0]-box[0,1]) for y in range(0+box[1,0], shape[1]-box[1,1]) 
+    #            for x in range(0+box[2,0], shape[2]-box[2,1]))
+    #finish_time = datetime.datetime.now()
+    #print(f'finished at {finish_time}, duration {finish_time - start_time}')
+    #chunk_size = data.size//(box_size[0]*boxside[1]*boxside[2])
+    #local_maxima = [False]*box[0,0]*shape[1]*shape[2] + [False]*box[1,0]*shape[0]*shape[2] + [False]*box[2,0]*shape[0]*shape[1] + [False]*box[0,1]*shape[1]*shape[2] + [False]*box[1,1]*shape[0]*shape[2] + [False]*box[2,1]*shape[0]*shape[1]
+    #local_maximared=[]
+
+    start_time = datetime.datetime.now()
+    print(f'start at {start_time}')
+    '''    local_maximared.extend(is_local_maxima(data[z-box[0,0]:z+box[0,1], 
+                y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
+                threshold[z,y,x],box) 
+                for z in range(0+box[0,0], shape[0]-box[0,1]) 
+                for y in range(0+box[1,0], shape[1]-box[1,1]) 
+                for x in range(0+box[2,0], shape[2]-box[2,1]))
+    #with get_context("spawn").Pool(processes=num_processes) as pool:
+    #    for chunk in chunked_iterable(args_iter, chunk_size):
+    #        local_maximared.extend(pool.starmap(is_local_maxima, chunk))
+    '''
+    local_maxima_coords = find_peaks_fast(data, threshold, box_size)
+    finish_time = datetime.datetime.now()
+    print(f'finished at {finish_time}, duration {finish_time - start_time}')
+    
+    #local_maximared.extend([False]*box[0,1]*shape[1]*shape[2] + [False]*box[1,1]*shape[0]*shape[2] + [False]*box[2,1]*shape[0]*shape[1])        
+    '''
     with get_context("spawn").Pool(processes=num_processes) as pool:
-        local_maxima = pool.starmap(is_local_maxima, [(data, threshold,box, z, y, x)
+        local_maxima = pool.starmap(is_local_maxima, [
+            (data[z-box[0,0]:z+box[0,1], y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
+            threshold[z,y,x],box)
             for z in range(0, shape[0]) for y in range(0, shape[1]) 
             for x in range(0, shape[2])])
-    local_maxima = np.array(local_maxima).reshape(shape[0], shape[1], shape[2])    
+
+    print('done with local maxima detection')
+
+    local_maximared = np.array(local_maximared).reshape(
+        shape[0]-box[0,1]-box[0,0], shape[1]-box[1,1]-box[1,0], 
+        shape[2]-box[2,1]-box[2,0])    
+    local_maxima[box[0,0]:shape[0]-box[0,1], box[1,0]:shape[1]-box[1,1], 
+                 box[2,0]:shape[2]-box[2,1]] = local_maximared
     #print(local_maxima)
     coords = np.where(local_maxima == True)
    
     local_maxima_coords = [[int(z), int(y), int(x), float(data[z, y, x])] 
             for z, y, x in zip(*coords)]
+    '''
     test_cube = np.zeros(shape)
     local_maxima_coords = sorted(local_maxima_coords, key=lambda x: x[3], reverse=True)
     
@@ -110,20 +163,42 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
 
     return peak_table,markers3d
       
+def find_peaks_fast(data, threshold, box_size):
+    # Apply maximum filter
+    local_max = (data == maximum_filter(data, size=box_size, mode='constant'))
+    # Apply threshold
+    detected_peaks = local_max & (data > threshold)
+    coords = np.where(detected_peaks)
+    local_maxima_coords = [[int(z), int(y), int(x), float(data[z, y, x])] 
+                           for z, y, x in zip(*coords)]
+    return local_maxima_coords        
+    
+      
+def is_local_maxima(arr_box,threshold,box):
+    if arr_box[box[0,0],box[1,0],box[2,0]] <= threshold:
+        return False
+    if np.isnan(arr_box[box[0,0],box[1,0],box[2,0]]):
+        return False
+    if np.isnan(arr_box).all():
+        return False
+    elif np.nanmax(arr_box) == arr_box[box[0,0],box[1,0],box[2,0]]:
+        return True
+    else:
+        return False
 
 
+
+'''
 def is_local_maxima(arr,threshold,box,z, y, x):
     if arr[z, y, x] <= threshold[z, y, x]:
         return False
-
     if np.isnan(arr[z, y, x]):
         return False
-
     subarray = arr[z-box[0,0]:z+box[0,1], y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]]
-
     if np.isnan(subarray).all():
         return False
     elif np.nanmax(subarray) == arr[z, y, x]:
         return True
     else:
         return False
+'''

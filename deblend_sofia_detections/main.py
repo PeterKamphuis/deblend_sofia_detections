@@ -14,8 +14,8 @@ from deblend_sofia_detections.deblending.deblending import deblend_sofia_detecti
 import sys
 import traceback
 import warnings
-from multiprocessing import get_context,Manager
-from memory_profiler import profile
+
+
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
     log = file if hasattr(file,'write') else sys.stderr
     traceback.print_stack(file=log)
@@ -23,12 +23,15 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 
 
 
-fz=open('profiler_logs/deblend_main_with_input_cubes.log','w+')
-@profile(stream=fz)
+#fz=open('profiler_logs/deblend_main_with_input_cubes.log','w+')
+#@profile(stream=fz)
+#This still slightly leaking in deblend_on_optical (wcs, match_size and subtract_background) 
+# but it seems to be in the packages.
 def main_with_input(argv):
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
-    del cfg
+   
+    
 
 
 def main():
@@ -36,7 +39,7 @@ def main():
     '''Set up the configuration as input by the user'''
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
-    del cfg
+    
     # for some dumb reason pools have to be called from main
     # !!!!!!!!Starts your Main Here
 if __name__ =="__main__":

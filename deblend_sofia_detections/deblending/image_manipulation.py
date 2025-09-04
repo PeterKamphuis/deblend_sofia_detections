@@ -6,6 +6,8 @@ from deblend_sofia_detections.deblending.sofia_functions import \
     execute_sofia
 from deblend_sofia_detections.support.system_functions import \
     create_directory
+from deblend_sofia_detections.support.support_functions import \
+    close_variables
 
 
 from astropy.convolution import convolve,Gaussian1DKernel
@@ -20,12 +22,12 @@ from astroquery.gaia import Gaia
 
 from photutils.aperture import EllipticalAperture
 from photutils.background import Background2D # Background2D is used for background subtraction
-
+from memory_profiler import profile
 import astropy.units as u
-
 import copy
 import numpy as np
 import os
+
 
 def cut_optical(hdr_over,wcs,dir,image):
     '''Cut out the optical image'''
@@ -86,7 +88,7 @@ def freq_smooth(cube, bin_size=0, smooth=0):
         for i in range(cube.shape[1]):
             for j in range(cube.shape[2]):
                 cube_new[:,i,j] = convolve(cube[:,i,j], kernel)
-        del kernel
+        close_variables(kernel)
     else: cube_new = cube  # do nothing
     return cube_new
 
@@ -117,7 +119,9 @@ def mask_gaia_stars(optical_image, optical_wcs,
     """
     #Load the gaia table
     Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
-    Gaia.ROW_LIMIT = -1
+    #Do not set this to minus one as it can crash
+    #
+    Gaia.ROW_LIMIT = 50000
     # Run astroquery.
     # This may take some time for large images. 
     # In such case, you can save this table and reload it next time.
@@ -136,14 +140,17 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''')
         gaia_table = Gaia.query_object_async(coords, width=w*pixel_scale, height=h*pixel_scale)
     else:
         gaia_table = Table.read(gaia_table)
-   
+    if cfg.general.verbose:
+        print(f"Found {len(gaia_table)} Gaia sources in the image area. Sorting them")
     #Remove galaxy canditates
     gaia_table = gaia_table[gaia_table['in_galaxy_candidates'] == False] 
     #gaia_table = gaia_table[gaia_table['in_qso_candidates'] == False]    
     #gaia_table = gaia_table[gaia_table['non_single_star'] == 0] 
     gaia_table.sort('phot_rp_mean_mag')
- 
     gaia_table = gaia_table[0:int(len(gaia_table)*0.5)]
+    if len(gaia_table) > 5000:
+        print("Capping the gaia table at 5000.")
+        gaia_table = gaia_table[0:5000]
     if cfg.general.verbose:
         print(f"Found {len(gaia_table)} Gaia sources in the image area.")
        # generate star masks
@@ -340,12 +347,14 @@ def split_sources(cfg_in,cube_name, mask,
         
     
     if np.unique(maskin[0].data).size-1 == 1 or counter  > 50:
-        del maskin
-        return False
+        ret_val= False
     else:
-        del maskin
-        return True
-    
+        ret_val = True
+    close_variables(maskin,split_sources)
+    return ret_val
+
+fn = open('profiler_logs/subtract_background.log','w+')
+@profile(stream=fn)
 def subtract_background(image,wcs):
     """
     Subtracts the background from an image using a 2D background estimation.
@@ -363,7 +372,8 @@ def subtract_background(image,wcs):
     
     box_size = [boxin, boxin]  # box size for background estimation
     background = Background2D(image, box_size)
-    
-    return image - background.background    
+    new_image = image - background.background
+    close_variables(image,background)
+    return new_image
 
      

@@ -8,7 +8,8 @@ from deblend_sofia_detections.deblending.peak_handling import find_peaks
 from deblend_sofia_detections.deblending.sofia_functions import read_sofia_table,\
     obtain_sofia_id, rerun_sofia
 from deblend_sofia_detections.support.system_functions import create_directory
-from deblend_sofia_detections.support.support_functions import match_size
+from deblend_sofia_detections.support.support_functions import match_size,\
+    close_variables
 
 from astropy.convolution import convolve
 from astropy.io import fits
@@ -24,7 +25,7 @@ import copy
 import numpy as np
 import os
 import shutil
-import gc
+
 # -*- coding: future_fstrings -*-
 
 
@@ -141,8 +142,6 @@ def deblend_moment0(data,optical_image,source_map=None, use_extend = False,
 
     return np.array(new_source_map,dtype=float)
 
-
-
 def deblend_on_optical(optical_image,cube = None, img=None,optical_name=None,
                        outdir='./',base_dir = './', cfg=None,source_id = 'unknown',
                        source_table=None, mom0=None,cube_mask =None):
@@ -152,11 +151,10 @@ def deblend_on_optical(optical_image,cube = None, img=None,optical_name=None,
     if cube is not None:
         wcs     = WCS(cube[0].header).celestial
         hi_header = copy.deepcopy(cube[0].header)
-        hi_mask = match_size(optical_image[0].data,np.nansum(cube[0].data,axis=0))
     else:
         wcs = WCS(mom0[0].header).celestial
         hi_header = copy.deepcopy(mom0[0].header)
-        hi_mask = match_size(optical_image[0].data,mom0[0].data)
+      
 
    
     #Obtain the background image we are using
@@ -207,8 +205,9 @@ def deblend_on_optical(optical_image,cube = None, img=None,optical_name=None,
 
         fits.writeto(f'{cfg.internal.ancillary_directory}/masked_background_{source_id}.fits',masked_bckgrnd
                     ,header=bckgrnd_wcs.to_header(),
-                    overwrite=True)   
-        del gaia_mask     
+                    overwrite=True)  
+        close_variables(gaia_mask) 
+        
     # We can now use the masked data to create a mask for the HI cube
     #if cfg.general.verbose:
     #    print("Plotting the masked image with mom 0 overlay.")    
@@ -226,6 +225,7 @@ def deblend_on_optical(optical_image,cube = None, img=None,optical_name=None,
     source_markers_2d = detect_optical_sources(masked_bckgrnd, bckgrnd_wcs,
         cfg=cfg,base_dir= base_dir,mask= hi_mask
         ,outdir=outdir,hdr=optical_image[0].header)
+    close_variables(hi_mask)
     fits.writeto(f"{outdir}detected_sources.fits",source_markers_2d.data,
                 header=bckgrnd_wcs.to_header(), overwrite=True)
    
@@ -238,125 +238,115 @@ def deblend_on_optical(optical_image,cube = None, img=None,optical_name=None,
                                             mask= source_markers_2d )
     if cfg.general.verbose:
         print(f'We found {len(np.unique(source_markers_2d))-1} sources in the optical image.')
-   
+    sources_2D = [False,None]
+    sources_3D = [False, None]    
+
     if len(np.unique(source_markers_2d))-1 <= 1:
         if cfg.general.verbose:
             print("Only one or no source found in the optical. Skipping the deblending.")
-        return [False,1000]
+        sources_2D =  [False,1000]
     
     # from here on 3D differs from  2D deblending
-    sources_2D = [False,None]
-   
-    if not mom0 is None:
-        masked_mom0 = np.ma.masked_array(mom0[0].data, np.abs(mom0[0].data) < 1e-8)
-        segments_2d_map = deblend_moment0(masked_mom0,masked_bckgrnd,
-                                        source_map= source_markers_2d , 
-                                        use_extend=True, two_dimensional=True,
-                                        cfg= cfg,outdir=outdir,hdr = optical_image[0].header,)
-        segments_2d_map= np.array(segments_2d_map, dtype=int)
-        fits.writeto(f"{outdir}optical_2D_watershed_all.fits",segments_2d_map,
-                    header=optical_image[0].header, overwrite=True)  
-        # we need to make sure one source is not continuosly
-        # surrounded by the other
-        new_mask = check_source_surrounded(cfg, segments_2d_map)
-        
-       
-        fits.writeto(f"{outdir}optical_2D_watershed_masks_original.fits",new_mask,
-                    header=optical_image[0].header, overwrite=True)  
-        
-        segments_2d_map_HI = match_size(mom0[0].data,segments_2d_map,max =True)
-        segments_2d_map_HI = check_source_size(cfg,segments_2d_map_HI,mom0[0].header,)
-       
-        fits.writeto(f"{outdir}optical_2D_watershed_masks.fits",segments_2d_map_HI,
-                    header=mom0[0].header, overwrite=True)
-      
-        if len(np.unique(segments_2d_map))-1 <= 1:
-            sources_2D = [False, 1000.]
-        else:
-            sources_2D = [True, len(np.unique(segments_2d_map_HI))-1]
-        '''
-        plot_source_image(masked_bckgrnd,bckgrnd_wcs,masked_mom0,
-                          outdir=outdir,name='mom0_on_stars')
-        plot_source_image(segments_2d_map,bckgrnd_wcs,masked_mom0,
-                          outdir=outdir,name='mom0_on_2Dsegment',cmap='Set1')
-        '''
-        if cfg.general.verbose:
-            print(f"Found {sources_2D} sources in the 2D deblending process.")
-        del segments_2d_map
-        del segments_2d_map_HI
-        del masked_mom0
-
-    sources_3D = [False, None]
     
-
-    # Normally we only do the 3D deblending if we have more than one source    
-    if not cube is None:
-        #Smooth the cube in frequecncy
-        cube_smooth = freq_smooth(cube[0].data, smooth=4.0)
-        # We actually do not smooth the mask but let's make a version
-        # so we could easily change this
-        if not cube_mask[0] is None:
-            mask_smooth=cube_mask[0].data
-        else:
-            mask_smooth = copy.deepcopy(cube[0].data)
-            mask_smooth[cube[0].data < 1e-6] = 0.
-
-        # The 3D markers are initially the same as the 2D markers in every channel
-        #Copy the markers to the 3D sized cube first in 2D and then put them in every channel
-        markersin_HI_resolution = match_size(cube[0].data[0,:,:], source_markers_2d,max=True)       
-        markers3d = np.zeros(cube_smooth.shape).astype(np.int8)
-        mask_channels = 0.
-        for freq in range(len(cube_smooth)):
-            markers3d[freq] =  markersin_HI_resolution
-            #Lets check the channels that have a mask
-            if np.nansum(mask_smooth[freq]) > 0:
-                mask_channels += 1
-        #Then apply the watershed algorithm
-        res3d0 = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
-                   connectivity=4)
-        # The segment need to grow by at least a beam in the channels that have a mask
-        pixel_scale = np.mean(abs(proj_plane_pixel_scales(wcs)))*u.deg
-        if 'BMAJ' in cube[0].header:
-           beamarea=(np.pi*abs(cube[0].header['BMAJ']*cube[0].header['BMIN']))/(4.*np.log(2.))*u.deg
-           pix_beam_area = (beamarea/(pixel_scale**2)).value
-           pix = pix_beam_area
-           #pix = (cube[0].header['BMAJ']*u.deg/pixel_scale).value
-        else:
-           pix = (4.**2)/(4.*np.log(2.))
-        min_growth = pix * mask_channels # Minimum growth in pixels
-        # Remove markers that do  not grow by at least a beam in the channels that have a mask
-        counter = 1
-        for i in np.unique(res3d0):
-            if i > 0 and np.sum(res3d0 == i) < np.sum(markers3d == i) + min_growth:
-                markers3d[res3d0==i] = 0 
-                if cfg.general.verbose:
-                    print(f'Removing source {i} that grows less than {min_growth} pixels.') 
+    if sources_2D[1] != 1000.:
+        if not mom0 is None:
+            masked_mom0 = np.ma.masked_array(mom0[0].data, np.abs(mom0[0].data) < 1e-8)
+            segments_2d_map = deblend_moment0(masked_mom0,masked_bckgrnd,
+                                            source_map= source_markers_2d , 
+                                            use_extend=True, two_dimensional=True,
+                                            cfg= cfg,outdir=outdir,hdr = optical_image[0].header,)
+            segments_2d_map= np.array(segments_2d_map, dtype=int)
+            fits.writeto(f"{outdir}optical_2D_watershed_all.fits",segments_2d_map,
+                        header=optical_image[0].header, overwrite=True)  
+            # we need to make sure one source is not continuosly
+            # surrounded by the other
+            new_mask = check_source_surrounded(cfg, segments_2d_map)
+            
+        
+            fits.writeto(f"{outdir}optical_2D_watershed_masks_original.fits",new_mask,
+                        header=optical_image[0].header, overwrite=True)  
+            
+            segments_2d_map_HI = match_size(mom0[0].data,segments_2d_map,max =True)
+            segments_2d_map_HI = check_source_size(cfg,segments_2d_map_HI,mom0[0].header,)
+        
+            fits.writeto(f"{outdir}optical_2D_watershed_masks.fits",segments_2d_map_HI,
+                        header=mom0[0].header, overwrite=True)
+        
+            if len(np.unique(segments_2d_map))-1 <= 1:
+                sources_2D = [False, 1000.]
             else:
-                markers3d[res3d0==i] = counter
-                counter += 1
-        # rerun watershed
-        res3d0 = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
-                   connectivity=2)
-        # Save the segments
-        fits.writeto(f"{outdir}optical_3D_watershed_mask.fits",res3d0,
-                    header=cube[0].header, overwrite=True)
-        if len(np.unique(res3d0))-1 <= 1:
-            sources_3D = [False, len(np.unique(res3d0))-1]
-        else:
-            sources_3D = [True, len(np.unique(res3d0))-1]
+                sources_2D = [True, len(np.unique(segments_2d_map_HI))-1]
+            '''
+            plot_source_image(masked_bckgrnd,bckgrnd_wcs,masked_mom0,
+                            outdir=outdir,name='mom0_on_stars')
+            plot_source_image(segments_2d_map,bckgrnd_wcs,masked_mom0,
+                            outdir=outdir,name='mom0_on_2Dsegment',cmap='Set1')
+            '''
+            if cfg.general.verbose:
+                print(f"Found {sources_2D} sources in the 2D deblending process.")
+            close_variables(segments_2d_map,segments_2d_map_HI,masked_mom0)
 
-        del res3d0
-        del markers3d
-        del markersin_HI_resolution  
-        del mask_smooth
-        del cube_smooth  
-    del source_markers_2d
-    del masked_bckgrnd
-    del bckgrnd
-    del hi_mask
-    del bckgrnd_wcs
-    del wcs_opt
-    del wcs
+        # Normally we only do the 3D deblending if we have more than one source    
+        if not cube is None:
+            #Smooth the cube in frequecncy
+            cube_smooth = freq_smooth(cube[0].data, smooth=4.0)
+            # We actually do not smooth the mask but let's make a version
+            # so we could easily change this
+            if not cube_mask[0] is None:
+                mask_smooth=cube_mask[0].data
+            else:
+                mask_smooth = copy.deepcopy(cube[0].data)
+                mask_smooth[cube[0].data < 1e-6] = 0.
+
+            # The 3D markers are initially the same as the 2D markers in every channel
+            #Copy the markers to the 3D sized cube first in 2D and then put them in every channel
+            markersin_HI_resolution = match_size(cube[0].data[0,:,:], source_markers_2d,max=True)       
+            markers3d = np.zeros(cube_smooth.shape).astype(np.int8)
+            mask_channels = 0.
+            for freq in range(len(cube_smooth)):
+                markers3d[freq] =  markersin_HI_resolution
+                #Lets check the channels that have a mask
+                if np.nansum(mask_smooth[freq]) > 0:
+                    mask_channels += 1
+            #Then apply the watershed algorithm
+            res3d0 = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
+                    connectivity=4)
+            # The segment need to grow by at least a beam in the channels that have a mask
+            pixel_scale = np.mean(abs(proj_plane_pixel_scales(wcs)))*u.deg
+            if 'BMAJ' in cube[0].header:
+                beamarea=(np.pi*abs(cube[0].header['BMAJ']*cube[0].header['BMIN']))/(4.*np.log(2.))*u.deg
+                pix_beam_area = (beamarea/(pixel_scale**2)).value
+                pix = pix_beam_area
+            #pix = (cube[0].header['BMAJ']*u.deg/pixel_scale).value
+            else:
+                pix = (4.**2)/(4.*np.log(2.))
+                min_growth = pix * mask_channels # Minimum growth in pixels
+            # Remove markers that do  not grow by at least a beam in the channels that have a mask
+            counter = 1
+            for i in np.unique(res3d0):
+                if i > 0 and np.sum(res3d0 == i) < np.sum(markers3d == i) + min_growth:
+                    markers3d[res3d0==i] = 0 
+                    if cfg.general.verbose:
+                        print(f'Removing source {i} that grows less than {min_growth} pixels.') 
+                else:
+                    markers3d[res3d0==i] = counter
+                    counter += 1
+            # rerun watershed
+            res3d0 = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
+                    connectivity=2)
+            # Save the segments
+            fits.writeto(f"{outdir}optical_3D_watershed_mask.fits",res3d0,
+                        header=cube[0].header, overwrite=True)
+            if len(np.unique(res3d0))-1 <= 1:
+                sources_3D = [False, len(np.unique(res3d0))-1]
+            else:
+                sources_3D = [True, len(np.unique(res3d0))-1]
+            close_variables(res3d0,cube_smooth,markers3d,markersin_HI_resolution,
+                mask_smooth)
+       
+    close_variables(source_markers_2d,masked_bckgrnd,bckgrnd,bckgrnd_wcs,
+        wcs,wcs_opt)  
+    
     if not sources_2D[1] is None and not sources_3D[1] is None:
         if sources_2D[1] == sources_3D[1] and sources_2D[0]:  
             return sources_2D
@@ -412,11 +402,11 @@ def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
     #Make a box size of 2 FWHM
     least_pixels = int(((50.*u.km/u.s)/velocity_width.to(u.km/u.s)).value)
     box_size = [least_pixels,int(pix_fwhm),int(pix_fwhm)]  # size of the box to find peaks in
-
+    print(f"Using a box size of {box_size} to find peaks.")
     peaks,markers3d = find_peaks(cfg,cube_smooth, threshold, box_size=box_size, npeaks=npeaks,      # this is fragile at the moment ...
                 mask=mask_smooth,previous_deblend =previous_deblend,outdir=outdir,
                 cube_header=cube[0].header,num_processes=cfg.general.ncpu)
-  
+    print(f"Found {len(peaks)} peaks in the cubelet {source_id}.")
   
     res3d = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6)
     finalhdr = copy.deepcopy(cube[0].header)# Save the results
@@ -431,11 +421,7 @@ def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
         result = [False, sources_3D]
     else:
         result = [True, sources_3D]
-    del cube_smooth
-    del mask_smooth
-    del res3d
-    del markers3d
-    
+    close_variables(cube_smooth,mask_smooth,res3d,markers3d)
     return result
 
 fn=open('profiler_logs/deblend_sofia_detections.log','w+')
@@ -477,12 +463,11 @@ def deblend_sofia_detections(cfg):
                         cfg_in=cfg)
     
     if max_source_id > max_source_id_original:
-        rerun_sofia(cfg)  
-    del max_source_id
-    del max_source_id_original
-    del sources
-    del sofia_basename
-    gc.collect()  
+        rerun_sofia(cfg)
+    close_variables(max_source_id,max_source_id_original,sources,sofia_basename)
+
+fn = open('profiler_logs/detect_optical_sources.log','w+')
+@profile(stream=fn)
 def detect_optical_sources(optical_image, optical_wcs
         ,cfg=None,base_dir='',mask=None,outdir='./',hdr=None,subtract = True):
     
@@ -704,8 +689,9 @@ def update_original_mask(cfg, original_mask_name=None,final_mask_name=None, id=N
      
         print(f'Writing the mask {original_mask_name}')
         original_mask.writeto(original_mask_name, overwrite=True)
-        
 
+fn = open('profiler_logs/watershed_deblending.log', 'w+')
+@profile(stream=fn)
 def watershed_deblending(cfg, name = None, cube_name = None, 
                          mask_name=None, optical_name=None, 
                          mom0_name=None,base_dir= '',

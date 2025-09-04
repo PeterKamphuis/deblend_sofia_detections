@@ -1,3 +1,4 @@
+from memory_profiler import profile
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
 
@@ -5,14 +6,14 @@ from deblend_sofia_detections.support.errors import InputError,UnitError,\
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
-
+from astropy.table import QTable,Table
 from scipy.ndimage import map_coordinates
 
 import astropy.units as u
 import copy
 import numpy as np
 import re
-
+import gc
 
 
 def calculate_projected_distance(coord1,coord2,no_PA=False): 
@@ -31,7 +32,21 @@ def calculate_projected_distance(coord1,coord2,no_PA=False):
   
     return separation,projected_PA.to(u.deg)
 
-
+def close_variables(*args):
+    for var in args:
+        if hasattr(var,'close'):
+            var.close()
+        elif hasattr(var,'clear'):
+            var.clear()
+        elif isinstance(var,(QTable,Table)):
+            for col in var.colnames:
+                var.remove_column(col)
+            var = None
+        else:
+            var = None
+    del var
+    gc.collect()
+        
 
 def convert_pix_columns_to_arcsec(cfg,table,file):
     #first open the cube
@@ -263,7 +278,8 @@ def isquantity(value):
             verdict = False
        
     return verdict
-
+fn = open('profiler_logs/match_size.log','w+')
+@profile(stream=fn)
 def match_size(matcharray, inarray,max=False):
     """
     Match the size of inarray to matcharray by regridding.
@@ -281,8 +297,8 @@ def match_size(matcharray, inarray,max=False):
             New_Shape = matcharray.shape[1:3]
         else:
             New_Shape = matcharray.shape
-       
-        return regrid_array(inarray, New_Shape,max= max)
+        out_array = regrid_array(inarray, New_Shape,max= max)
+        return out_array
 
 
 

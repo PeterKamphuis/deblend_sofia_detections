@@ -138,8 +138,6 @@ def load_sofia_basename(filename):
     input_file = load_sofia_input_file(filename)
     return os.path.basename(os.path.splitext(input_file['input.data'])[0])
 
-fn=open('profiler_logs/load_sofia_catlogue.log','w+')
-@profile(stream=fn)
 def load_sofia_catalogue(filename, variables = None,verbose = False, no_conversion=False):
     '''Read a specified sofia table into a Astropy QTable'''     
     if filename.endswith('.xml'): 
@@ -301,8 +299,6 @@ def obtain_sofia_id(base_name, cube_name):
     id  = parts[1]
     return id,cube_file
 
-fn=open('profiler_logs/read_sofia_table.log','w+')
-@profile(stream=fn)
 def read_sofia_table(cfg,sofia_directory='./',sofia_basename=None,
         no_conversion=False,
         force_text = False):
@@ -336,17 +332,14 @@ probably no sources were found.''')
     return sources,sofia_basename,table_name
 
 
-fn=open('profiler_logs/read_sofia_xml.log','w+')
-@profile(stream=fn)
 def read_sofia_xml(filename,variables=None,verbose=False):
-    '''Read the sofia xml file into a Astropy QTable'''
-  
+    '''Read the sofia xml file into a Astropy QTable'''  
     if verbose:
         print(f'Reading the sofia catalogue {filename}')
     # Read the xml file
+    # an initial invocation of Qtable/table makes a memory leak, this appears unavoidable.
+    # It doesn't appear to accumalate
     table = QTable(votable.parse(filename).get_first_table().to_table())
-  
-    #sources = QTable.read(filename, format='xml')
     actual_colnames = [x for x in table.colnames]
     lower_colnames = [x.lower() for x in actual_colnames]
     
@@ -364,10 +357,6 @@ def read_sofia_xml(filename,variables=None,verbose=False):
             table.remove_column(col)
             table.rename_column('tmp',col)
           
-       #if isinstance(unit, str):
-        #    table['unit'][table['unit'] == unit] = translate_string_to_unit(unit)       
-
-    #Remove unwanted 
     if verbose:
         print(f'We found the following columns in the sofia catalogue: {actual_colnames}')
     return table
