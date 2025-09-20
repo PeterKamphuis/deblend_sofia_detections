@@ -18,7 +18,7 @@ import time
 Ned.TIMEOUT = 3600
 
 def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
-        weights = [1.,1.,1.],weight_min_area = False ):
+        weights = [1.,1.,1.],wide_search = False ):
     requested_columns=['Object Name','RA','DEC','Velocity','Type',\
         'Magnitude and Filter','Distance']
   
@@ -31,7 +31,7 @@ def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
 
     # Setup a search table in ned
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region)
+        counterpart_region=cfg.general.counterpart_region,wide_search=wide_search)
     if cfg.general.verbose:
         print("Querying NED")
         print(f'Search a radius {radius.to(u.arcmin)} around {", ".join(convertRADEC(*[x.value for x in coordinates[:2]]))}')
@@ -51,6 +51,7 @@ def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
     # Astropy is so stupid that it does not provide a QTable from the query
     # so we have to do this as well. 
     result_table = QTable()
+    
     for x in requested_columns:
         if x in internet_table.colnames:
             tmp_column= internet_table[x]
@@ -132,7 +133,7 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
 
 
 def search_counter_part(cfg,source,sofia_directory= './',
-        basename=None,query ='NED',insource=None):
+        basename=None,query ='NED',insource=None,wide_search=False):
     '''Look for the optical counterpart of the source'''
     try:
         inid = source['id']
@@ -153,7 +154,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
     # first try a spectroscopic match
     if query.upper() == 'NED':
         spectroscopic_table = find_NED_counterpart(cfg,source, header_info,\
-            sysrange=150.*u.km/u.s)
+            sysrange=150.*u.km/u.s,wide_search=wide_search)
         search_id = 'NED'
         pref =''
     elif query.upper() == 'MANUAL':
@@ -219,7 +220,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
 
 
 def set_search_radius(cfg,source,header_info,sysrange=None,
-        counterpart_region = 'Beam'):
+        counterpart_region = 'Beam',wide_search = False):
     vsys = None
     pref = ''
     for col in source.colnames:
@@ -227,30 +228,48 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
                 pref = 'sofia_'
     if not sysrange is None:
         vsys = source[pref+'v_sofia'].to(u.km/u.s) #systemic in km/s
-            
+
+
+
+    # If we have velocity information we can do a 3 times wider area        
     radius = header_info['BMAJ']/2.
+
+    # but we need to check it doesn't becaome to big for small sources
+      
+
     if counterpart_region.lower() in ['beam']:
+        
         pass
+        
     elif counterpart_region.lower() in ['3beam']:
         radius = header_info['BMAJ']*3./2.
+        
     elif counterpart_region.lower() in ['box']:
         radius = np.nanmax([np.nanmax([source[pref+'x'].value-source[pref+'x_min'].value,\
                          source[pref+'x_max'].value-source[pref+'x'].value,
                          source[pref+'y'].value-source[pref+'y_min'].value,
                          source[pref+'y_max'].value-source[pref+'y'].value
-                         ])*header_info['pixelsize'],radius])
+                         ])*header_info['pixelsize'],float(radius.value)])*u.deg
     elif counterpart_region.lower() in ['ellipse']:
         if f'{pref}ell_maj' in source.colnames:
             radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value*0.1),
                                 float(radius.to(u.deg).value)])*u.deg
+            
     elif counterpart_region.lower() in ['full_ellipse']:
+        #for the full elipse we do not allow a wider area with velocity information
         if f'{pref}ell_maj' in source.colnames:
             radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value),
                                 float(radius.to(u.deg).value)])*u.deg
     else:
         raise InputError(f'We dont know what to do with {counterpart_region} for counterpart_region')
-
-  
+    if wide_search and counterpart_region.lower() not in ['full_ellipse','box']:
+        radius *= 5.
+    if f'{pref}ell_maj' in source.colnames:
+        if radius > source[f'{pref}ell_maj'].to(u.deg):
+            if cfg.general.verbose:
+                print(f'Reducing the search radius to the ellipse major axis {source[f"{pref}ell_maj"]}')
+            radius = float(source[f'{pref}ell_maj'].to(u.deg).value)*u.deg
+    
     return vsys, radius
 
 
