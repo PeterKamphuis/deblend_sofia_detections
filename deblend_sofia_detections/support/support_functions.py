@@ -1,4 +1,12 @@
-from memory_profiler import profile
+PROFILING = False  # set to True to enable memory profiling
+if PROFILING:
+    from memory_profiler import profile
+else:
+    def profile(stream=None):
+        def decorator(func):
+            return func
+        return decorator
+
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
 
@@ -278,7 +286,7 @@ def isquantity(value):
             verdict = False
        
     return verdict
-fn = open('profiler_logs/match_size.log','w+')
+fn = open('profiler_logs/match_size.log', 'w+') if PROFILING else None
 @profile(stream=fn)
 def match_size(matcharray, inarray,max=False):
     """
@@ -293,11 +301,25 @@ def match_size(matcharray, inarray,max=False):
     if matcharray.shape == inarray.shape:
         return inarray
     else:
+        # If the matcharray has more dimensions than the inarray, we need to add dimensions to the inarray
+        reconstructed = False
         if len(matcharray.shape) == 3 and len(inarray.shape) == 2:
-            New_Shape = matcharray.shape[1:3]
-        else:
-            New_Shape = matcharray.shape
+            match_in = copy.deepcopy(matcharray)
+            reconstructed = True
+            matcharray = matcharray[0,:,:]
+         
+        # If the matcharray has less dimensions than the inarray, 
+        # we do this by averaging over first dimension of the inarray    
+        if len(matcharray.shape) == 2 and len(inarray.shape) == 3:
+            inarray = np.nanmean(inarray, axis=0)
+           
+        New_Shape = matcharray.shape
         out_array = regrid_array(inarray, New_Shape,max= max)
+        if reconstructed:
+            new_array = np.zeros_like(match_in)
+            for i in range(match_in.shape[0]):
+                new_array[i,:,:] = out_array
+            out_array = new_array
         return out_array
 
 

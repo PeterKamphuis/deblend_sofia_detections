@@ -5,9 +5,12 @@ from deblend_sofia_detections.support.errors import InputError
 import os
 import time
 
-def create_directory(directory,base_directory):
+def create_directory(directory,base_directory=None):
     split_directory = [x for x in directory.split('/') if x]
     split_directory_clean = [x for x in directory.split('/') if x]
+    if base_directory is None:
+        #If we do not provide a base directory the directory has to under the current working tree
+        base_directory = os.getcwd()
     split_base = [x for x in base_directory.split('/') if x]
     #First remove the base from the directory but only if the first directories are the same
     if split_directory[0] == split_base[0]:
@@ -59,4 +62,8 @@ def convert_ps(image):
     os.system(f'gs -dSAFER -dEPSCrop -r300 -sDEVICE=jpeg -o {base}.png {image}')
 
 def join_path(*args):
-    return os.path.normpath(os.path.join(*args))
+    ini = os.path.normpath(os.path.join(*args))
+    if len(args[-1]) > 0 :
+        if args[-1][-1] == '/':
+            ini = ini+'/'
+    return ini

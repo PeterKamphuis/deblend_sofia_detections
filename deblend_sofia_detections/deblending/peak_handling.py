@@ -1,6 +1,5 @@
+from tabnanny import verbose
 
-
-from time import time
 from deblend_sofia_detections import report_version
 
 from astropy.table import QTable
@@ -13,7 +12,7 @@ import datetime
 
 from scipy.ndimage import maximum_filter
 
-def filter_peaks(maxima, border_width = None,npeaks=np.inf,
+def filter_peaks(maxima,npeaks=np.inf,verbose=False,
         previous_deblend=None):
       
 
@@ -31,7 +30,8 @@ def filter_peaks(maxima, border_width = None,npeaks=np.inf,
                 # which is not what we want
                 # We use the mean of the previous deblend in the vicinity of the peak
                 current = previous_deblend[peaks[0],peaks[1],peaks[2]]
-                print(f"Using previous deblend value {current} for peak {peaks}")
+                if verbose:
+                    print(f"Using previous deblend value {current} for peak {peaks}")
                 if current in mask_values:
                     current = 0.
             else:
@@ -70,11 +70,12 @@ def chunked_iterable(iterable, size):
 
 
 def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
-               border_width=None, npeaks=np.inf, previous_deblend=None,
+               npeaks=np.inf, previous_deblend=None,
                num_processes=6,outdir='./',cube_header=None):
     
     shape = data.shape
-    print(f'Data shape {shape}')
+    if cfg.general.debug:
+        print(f'Data shape {shape}')
     #maskd the data if a mask is present
     if mask is not None:
         data[mask < 0.5] = float('NaN')
@@ -82,67 +83,25 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
     boxside = np.array(np.ceil(np.array(box_size) / 2.0),dtype=int)
     box = np.array([[boxside[0]-1, boxside[0]], [boxside[1]-1,boxside[1]], 
                     [boxside[2]-1,boxside[2]]],dtype=int)
-    print(f'doing local maxima detection with {num_processes} processes')
-    print(f'box size {box_size}, box {box}')
-    #start_time = datetime.datetime.now()
-    #print(f'start at {start_time}')
-    #local_maxima = np.full(shape, False)
-    #args_iter = ((data[z-box[0,0]:z+box[0,1], y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
-    #            threshold[z,y,x],box)
-    #            for z in range(0+box[0,0], shape[0]-box[0,1]) for y in range(0+box[1,0], shape[1]-box[1,1]) 
-    #            for x in range(0+box[2,0], shape[2]-box[2,1]))
-    #finish_time = datetime.datetime.now()
-    #print(f'finished at {finish_time}, duration {finish_time - start_time}')
-    #chunk_size = data.size//(box_size[0]*boxside[1]*boxside[2])
-    #local_maxima = [False]*box[0,0]*shape[1]*shape[2] + [False]*box[1,0]*shape[0]*shape[2] + [False]*box[2,0]*shape[0]*shape[1] + [False]*box[0,1]*shape[1]*shape[2] + [False]*box[1,1]*shape[0]*shape[2] + [False]*box[2,1]*shape[0]*shape[1]
-    #local_maximared=[]
-
+    if cfg.general.verbose:
+        print(f'doing local maxima detection with {num_processes} processes')
+        print(f'box size {box_size}, box {box}')
+ 
     start_time = datetime.datetime.now()
-    print(f'start at {start_time}')
-    '''    local_maximared.extend(is_local_maxima(data[z-box[0,0]:z+box[0,1], 
-                y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
-                threshold[z,y,x],box) 
-                for z in range(0+box[0,0], shape[0]-box[0,1]) 
-                for y in range(0+box[1,0], shape[1]-box[1,1]) 
-                for x in range(0+box[2,0], shape[2]-box[2,1]))
-    #with get_context("spawn").Pool(processes=num_processes) as pool:
-    #    for chunk in chunked_iterable(args_iter, chunk_size):
-    #        local_maximared.extend(pool.starmap(is_local_maxima, chunk))
-    '''
     local_maxima_coords = find_peaks_fast(data, threshold, box_size)
     finish_time = datetime.datetime.now()
-    print(f'finished at {finish_time}, duration {finish_time - start_time}')
-    
-    #local_maximared.extend([False]*box[0,1]*shape[1]*shape[2] + [False]*box[1,1]*shape[0]*shape[2] + [False]*box[2,1]*shape[0]*shape[1])        
-    '''
-    with get_context("spawn").Pool(processes=num_processes) as pool:
-        local_maxima = pool.starmap(is_local_maxima, [
-            (data[z-box[0,0]:z+box[0,1], y-box[1,0]:y+box[1,1], x-box[2,0]:x+box[2,1]], 
-            threshold[z,y,x],box)
-            for z in range(0, shape[0]) for y in range(0, shape[1]) 
-            for x in range(0, shape[2])])
-
-    print('done with local maxima detection')
-
-    local_maximared = np.array(local_maximared).reshape(
-        shape[0]-box[0,1]-box[0,0], shape[1]-box[1,1]-box[1,0], 
-        shape[2]-box[2,1]-box[2,0])    
-    local_maxima[box[0,0]:shape[0]-box[0,1], box[1,0]:shape[1]-box[1,1], 
-                 box[2,0]:shape[2]-box[2,1]] = local_maximared
-    #print(local_maxima)
-    coords = np.where(local_maxima == True)
-   
-    local_maxima_coords = [[int(z), int(y), int(x), float(data[z, y, x])] 
-            for z, y, x in zip(*coords)]
-    '''
-    test_cube = np.zeros(shape)
+    if cfg.general.verbose:
+        print(f'We found our peaks in {finish_time - start_time}')
+        print(f'We now sort the peaks and filter them')
+    # sorted is an intrinsic python funcion    
     local_maxima_coords = sorted(local_maxima_coords, key=lambda x: x[3], reverse=True)
-    
-    peak_table = filter_peaks(local_maxima_coords, border_width=border_width,
-        previous_deblend=previous_deblend,npeaks=npeaks)
+    peak_table = filter_peaks(local_maxima_coords, previous_deblend=previous_deblend
+        ,npeaks=npeaks,verbose=cfg.general.verbose)
+    if cfg.general.debug:
+        #write the peak table to debug directory
+        peak_table.write(f'{outdir}/debug_products/peak_table.ecsv', overwrite=True)
 
-
-  #Make a new markers map based on the peaks
+    #Make a new markers map based on the peaks
     markers3d = np.zeros(shape).astype(np.int8)
 
     for peak in peak_table:
@@ -154,12 +113,14 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
             print(f"Placing markers for peak {peak['mask_values']} at {x},{y},{z} ")
 
         markers3d[z-box[0,0]:z+box[0,1],y-box[1,0]:y+box[1,1],
-            x-box[2,0]:x+box[2,1]] = peak["mask_values"]
+            x-box[2,0]:x+box[2,1]] = int(peak["mask_values"])
 
         # you can add some markers manually
         # (manual markers here ...)
-    fits.writeto(f"{outdir}peak3d_markers.fits",markers3d,
-                header=cube_header, overwrite=True)
+    if cfg.general.debug:
+        print(f"Saving peak markers to {outdir}debug_products/peak3d_markers.fits")
+        fits.writeto(f"{outdir}debug_products/peak3d_markers.fits",markers3d,
+            header=cube_header, overwrite=True)
 
     return peak_table,markers3d
       

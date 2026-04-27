@@ -6,9 +6,10 @@ from deblend_sofia_detections.support.support_functions import convertRADEC,\
 
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.table import QTable, Column
+from astropy.table import QTable, Column,Table
 
 from astroquery.ipac.ned import Ned
+from xml.parsers.expat import ExpatError
 
 import astropy.units as u
 import copy
@@ -17,11 +18,35 @@ import time
 
 Ned.TIMEOUT = 3600
 
+
+def get_ned_requested_metadata(include_extra=False):
+    requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
+        'Magnitude and Filter', 'Distance']
+    requested_dtypes = ['U30', float, float, float, object, object, float]
+    requested_units = [None, u.deg, u.deg, u.km/u.s, None, None, u.Mpc]
+
+    if include_extra:
+        requested_columns += ['Spatial Diff', 'Velocity Diff', 'Combined Diff']
+        requested_dtypes += [float, float, float]
+        requested_units += [u.deg, u.km/u.s, u.dimensionless_unscaled]
+
+    return requested_columns, requested_dtypes, requested_units
+
+
+def make_empty_ned_search_table():
+    requested_columns, requested_dtypes, requested_units = \
+        get_ned_requested_metadata(include_extra=True)
+
+    table = QTable(names=requested_columns, dtype=requested_dtypes,
+        units=requested_units)
+    table.add_row(['No object Found', np.nan, np.nan, np.nan,
+        'Unknown', None, np.nan, np.nan, np.nan, np.nan])
+    return table
+
+
 def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
         weights = [1.,1.,1.],wide_search = False ):
-    requested_columns=['Object Name','RA','DEC','Velocity','Type',\
-        'Magnitude and Filter','Distance']
-  
+    requested_columns, dummy_dtypes, dummy_units = get_ned_requested_metadata()
     coordinates = [source['ra'].unmasked,source['dec'].unmasked]
     #coordinates, radius
     #[source['ra'],source['dec'],source['v_sofia']],\
@@ -36,14 +61,23 @@ def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
         print("Querying NED")
         print(f'Search a radius {radius.to(u.arcmin)} around {", ".join(convertRADEC(*[x.value for x in coordinates[:2]]))}')
     # get the NED table
-    try:
-        internet_table = Ned.query_region(co, radius=radius, equinox='J2000.0')
-    except:
-        time.sleep(10)
+    internet_table = None
+    query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
+    for attempt in range(3):
         try:
             internet_table = Ned.query_region(co, radius=radius, equinox='J2000.0')
-        except Exception as e:
-            raise InputError(f'Could not query NED, error {e}')
+            break
+        except query_errors as e:
+            if cfg.general.verbose:
+                print(f'NED query failed on attempt {attempt + 1}/3: {e}')
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
+
+    if internet_table is None:
+        if cfg.general.verbose:
+            print('NED returned an invalid or temporary response; continuing without a NED counterpart.')
+        return make_empty_ned_search_table()
+    
     # as astropy is the dumbest project ever they can not be consistant so 
     # we have to correct the units for RA and DEg
     internet_table['RA'].unit=u.deg
@@ -98,7 +132,6 @@ def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
         if ':' in name:
             search_table['Object Name'][0] = name.split(':')[0]
     if search_table['Velocity Diff'].unit != u.km/u.s:
-        print(search_table)
         print(f'Velocity Diff unit is {search_table["Velocity Diff"].unit}')
    
     return search_table
@@ -109,17 +142,17 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
         return  QTable()
     manual_table = read_manual_table(cfg)
 
-    coordinates = [source['sofia_ra'][0],source['sofia_dec'][0]]
+    coordinates = [source['sofia_ra'],source['sofia_dec']]
     
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
         counterpart_region=cfg.general.counterpart_region)
   
     search_table = sort_on_distance(manual_table, coordinates,vsys)
     if cfg.general.verbose:
-        print(f'Searching for manual counterpart for {source["sofia_id"][0]}')
+        print(f'Searching for manual counterpart for {source["sofia_id"]}')
         print(f'Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(coordinates[0].value,coordinates[1].value))}')
-        print(f' The nearest target is {search_table["Name"][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}')
-        print(f'And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}')
+        print(f' The nearest target is {search_table["Name"]} at a distance of {search_table["Spatial Diff"].to(u.arcsec)}')
+        print(f'And the velocity difference is {search_table["Velocity Diff"].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}')
    
   
     # if we have set a range of velocities we mask all that that are outside the range
@@ -135,10 +168,12 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
 def search_counter_part(cfg,source,sofia_directory= './',
         basename=None,query ='NED',insource=None,wide_search=False):
     '''Look for the optical counterpart of the source'''
+    if isinstance(source, (Table, QTable)):
+        source = source[0]
     try:
         inid = source['id']
     except:
-        inid = source['sofia_id'][0]
+        inid = source['sofia_id']
     if cfg.general.verbose:
         print(f'Searching in {query} to find a counterpart for {basename} with id {inid}')
    
@@ -153,8 +188,10 @@ def search_counter_part(cfg,source,sofia_directory= './',
    
     # first try a spectroscopic match
     if query.upper() == 'NED':
+      
         spectroscopic_table = find_NED_counterpart(cfg,source, header_info,\
             sysrange=150.*u.km/u.s,wide_search=wide_search)
+        
         search_id = 'NED'
         pref =''
     elif query.upper() == 'MANUAL':
@@ -164,8 +201,10 @@ def search_counter_part(cfg,source,sofia_directory= './',
         pref = 'sofia_'
     confirmed = True
    
-    if check_table_length(spectroscopic_table) > 0:
-        new_table = spectroscopic_table   
+    if check_table_length(spectroscopic_table) > 0 and not (
+        'Object Name' in spectroscopic_table.colnames and
+        spectroscopic_table['Object Name'][0] == 'No object Found'):
+        new_table = spectroscopic_table
     else:
         if cfg.general.verbose:
             print(f'We found no match within the velocity range, picking the closest object without velocity')
@@ -179,7 +218,9 @@ def search_counter_part(cfg,source,sofia_directory= './',
     #false_table = True
     #if query.upper() == 'NED':
     #    false_table = False
-    if check_table_length(new_table) > 0: # and false_table:
+    if check_table_length(new_table) > 0 and not (
+        query.upper() == 'NED' and 'Object Name' in new_table.colnames and
+        new_table['Object Name'][0] == 'No object Found'):
         new_table=new_table[0:1]
         final_row = combine_tables(new_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = confirmed
@@ -187,11 +228,8 @@ def search_counter_part(cfg,source,sofia_directory= './',
         if cfg.general.verbose:
             print(f'We found no {search_id} counterpart for {source[pref+"id"]}')
         if query.upper() == 'NED':
-            requested_columns = ['Object Name','RA','DEC','Velocity','Type',\
-                'Magnitude and Filter','Distance','Spatial Diff','Velocity Diff',\
-                'Combined Diff']
-            requested_dtypes = ['U30',float,float,float,object,object,object,float,float,float]
-            requested_units = [None,u.deg,u.deg,u.km/u.s,None,None,None,u.deg,u.km/u.s,None]
+            requested_columns, requested_dtypes, requested_units = \
+                get_ned_requested_metadata(include_extra=True)
         elif query.upper() == 'MANUAL':
             manual_table = read_manual_table(cfg,need_velocity=False)
             # Add the difference columns 
@@ -215,7 +253,9 @@ def search_counter_part(cfg,source,sofia_directory= './',
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = False
-       
+    # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
+    if not isinstance(final_row, (QTable,Table)):
+        raise InputError(f'We expected a table but got {type(final_row)}')
     return final_row
 
 
@@ -252,6 +292,8 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
                          ])*header_info['pixelsize'],float(radius.value)])*u.deg
     elif counterpart_region.lower() in ['ellipse']:
         if f'{pref}ell_maj' in source.colnames:
+            print(f'This is the values from sofia')
+            print(source[f'{pref}ell_maj'].to(u.deg).value,radius.to(u.deg).value)
             radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value*0.1),
                                 float(radius.to(u.deg).value)])*u.deg
             

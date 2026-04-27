@@ -9,8 +9,8 @@
 # Global settings
 
 pipeline.verbose           =  false
-pipeline.pedantic          =  true
-pipeline.threads           =  0
+pipeline.pedantic          =  false
+pipeline.threads           =  1
 
 
 # Input
@@ -20,6 +20,7 @@ input.region               =
 input.gain                 =  
 input.noise                =  
 input.weights              =  
+input.primaryBeam          =  
 input.mask                 =  
 input.invert               =  false
 
@@ -27,6 +28,7 @@ input.invert               =  false
 # Flagging
 
 flag.region                =  
+flag.cube                  =  
 flag.catalog               =  
 flag.radius                =  5
 flag.auto                  =  false
@@ -45,38 +47,38 @@ contsub.padding            =  3
 
 # Noise scaling
 
-scaleNoise.enable          =  true
+scaleNoise.enable          =  false
 scaleNoise.mode            =  spectral
 scaleNoise.statistic       =  mad
-scaleNoise.fluxRange       =  full
-scaleNoise.windowXY        =  27
-scaleNoise.windowZ         =  17
+scaleNoise.fluxRange       =  negative
+scaleNoise.windowXY        =  25
+scaleNoise.windowZ         =  15
 scaleNoise.gridXY          =  0
 scaleNoise.gridZ           =  0
 scaleNoise.interpolate     =  false
 scaleNoise.scfind          =  false
 
 
-# Ripple filter
+# Background subtraction
 
-rippleFilter.enable        =  false
-rippleFilter.statistic     =  median
-rippleFilter.windowXY      =  31
-rippleFilter.windowZ       =  15
-rippleFilter.gridXY        =  0
-rippleFilter.gridZ         =  0
-rippleFilter.interpolate   =  false
+background.enable          =  false
+background.statistic       =  median
+background.windowXY        =  31
+background.windowZ         =  15
+background.gridXY          =  0
+background.gridZ           =  0
+background.interpolate     =  false
 
 
 # S+C finder
 
 scfind.enable              =  true
-scfind.kernelsXY           =  0, 1, 3
-scfind.kernelsZ            =  0, 1, 3
-scfind.threshold           =  4.0      
-scfind.replacement         =  5.0
+scfind.kernelsXY           =  0, 3, 6
+scfind.kernelsZ            =  0, 3, 7, 15
+scfind.threshold           =  5.0
+scfind.replacement         =  2.0
 scfind.statistic           =  mad
-scfind.fluxRange           =  full
+scfind.fluxRange           =  negative
 
 
 # Threshold finder
@@ -91,10 +93,10 @@ threshold.fluxRange        =  negative
 # Linker
 
 linker.enable              =  true
-linker.radiusXY            =  2
-linker.radiusZ             =  0
-linker.minSizeXY           =  2
-linker.minSizeZ            =  2
+linker.radiusXY            =  1
+linker.radiusZ             =  1
+linker.minSizeXY           =  5
+linker.minSizeZ            =  5
 linker.maxSizeXY           =  0
 linker.maxSizeZ            =  0
 linker.minPixels           =  0
@@ -102,43 +104,52 @@ linker.maxPixels           =  0
 linker.minFill             =  0.0
 linker.maxFill             =  0.0
 linker.positivity          =  false
-linker.keepNegative        =  false
 
 
 # Reliability
 
-reliability.enable         =  true
+reliability.enable         =  false
 reliability.parameters     =  peak, sum, mean
-reliability.threshold      =  1.0                #This is diffferent from Kamphuis 2022
-reliability.scaleKernel    =  0.3
-reliability.minSNR         =  5.7  # print(26.9/np.sqrt(beamarea/(abs(hdr['CDELT1'])*abs(hdr['CDELT
-reliability.minPixels      =  0
+reliability.threshold      =  0.9
+reliability.scaleKernel    =  0.4
+reliability.autoKernel     =  false
+reliability.iterations     =  30
+reliability.tolerance      =  0.05
 reliability.catalog        =  
 reliability.plot           =  true
 reliability.debug          =  false
 
 
+# Filtering
+
+filter.discardNegative     =  true
+filter.minSNR              =  3.0
+filter.minPixels           =  0
+
+
 # Mask dilation
 
-dilation.enable            =  true
-dilation.iterationsXY      =  3
-dilation.iterationsZ       =  0
-dilation.threshold         =  0.02
+dilation.enable            =  false
+dilation.iterationsXY      =  10
+dilation.iterationsZ       =  5
+dilation.threshold         =  0.001
 
 
 # Parameterisation
 
 parameter.enable           =  true
 parameter.wcs              =  true
-parameter.physical         =  true
+parameter.physical         =  false
 parameter.prefix           =  SoFiA
-parameter.offset           =  true
+parameter.offset           =  false
 
 
 # Output
 
 output.directory           =  
 output.filename            =  
+output.dataFormat          =  fits
+output.writeLogFile        =  true
 output.writeCatASCII       =  true
 output.writeCatXML         =  true
 output.writeCatSQL         =  false
@@ -149,6 +160,12 @@ output.writeMask2d         =  false
 output.writeRawMask        =  false
 output.writeMoments        =  true
 output.writeCubelets       =  true
-output.marginCubelets      =  10
+output.writePV             =  false
+output.writeKarma          =  false
+output.marginCubeletsXY    =  10
+output.marginCubeletsZ     =  10
+output.marginAperSpec      =  -1
 output.thresholdMom12      =  0.0
+output.showPreviewImage    =  false   # Mac OS users: requires iTerm2
+output.writeDiagnosticPlot =  true
 output.overwrite           =  true
