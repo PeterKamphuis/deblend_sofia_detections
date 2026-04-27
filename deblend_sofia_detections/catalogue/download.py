@@ -8,23 +8,22 @@ from astropy.io import fits
 from astroquery.skyview import SkyView
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
-
+import urllib.request
 import os
 import warnings
 import numpy as np
 
 
 
-def download_full_FOV_optical(cfg):
+def creating_full_FOV_optical(cfg):
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
+    #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
     if cfg.general.verbose:
         print(f'Quering the Sky Survey')
-    if not os.path.isdir(f'{cfg.internal.ancillary_directory}/'):
-        os.system(f'mkdir {cfg.internal.ancillary_directory}/')
     #First we open the moment header 0 to get the extend of the field 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")     
-        mom0_header = fits.getheader(f'{cfg.internal.sofia_directory}/{cfg.internal.sofia_basename}_mom0.fits')
+        mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
         mom0_wcs = WCS(mom0_header).celestial
     #set the size of the image
     size = np.nanmax([abs(mom0_header['NAXIS1']*mom0_header['CDELT1'])*60.,
@@ -45,7 +44,7 @@ def download_full_FOV_optical(cfg):
     if not cfg.input.manual_optical_image[0] is None:
         if cfg.general.verbose:
             print(f'Checking manual input')
-        for identifier in cfg.general.manual_optical_image:
+        for identifier in cfg.input.manual_optical_image:
             if os.path.isfile(identifier):
                 print(f'Found manual optical image: {identifier}')
             manual_path,manual_file = os.path.split(identifier)
@@ -57,7 +56,7 @@ def download_full_FOV_optical(cfg):
 
             cutout_hdr = cutout.wcs.to_header()
             cutout_hdr['COMMENT'] =  f'The original file was  {identifier}'
-            fits.writeto(f'{cfg.internal.ancillary_directory}/moment0_full_DSS.fits',cutout.data,cutout_hdr,overwrite=True)
+            fits.writeto(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
 
             return
 
@@ -67,7 +66,7 @@ def download_full_FOV_optical(cfg):
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''')
-    #SkyView.clear_cache()
+    SkyView.clear_cache()
     sky_view_list = SkyView.get_image_list(position=obj_coords,
                                    radius = size_quantity,
                                    coordinates = "J2000",
@@ -83,13 +82,15 @@ pixels: {size_pixels},''')
               ''')
     for path in sky_view_list:
         if cfg.general.verbose:
-            print(f'''Starting the download for {cfg.internal.data_cube}.
+            print(f'''Starting the download for {cfg.sofia.original_data_cube}.
 This can take a while.''')
         filename = path.split("/")[-1]
-        os.system('wget '+path)
-        if os.path.isfile(filename):
+        if cfg.general.verbose:
+           print(f'Downloading {filename} from SkyView from {path}')
+        urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
+        if os.path.isfile(f'{cfg.internal.optical_background}'):
             print("Successfully downloaded the image")
-            os.system(f'mv {filename} {cfg.internal.ancillary_directory}/moment0_full_DSS.fits')
+            #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
         else:
             print("Failed to obtain the image from SkyView")
             raise DownloadError(f'''Failed to download the image from SkyView: {path}

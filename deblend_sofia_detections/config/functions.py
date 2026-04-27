@@ -1,6 +1,6 @@
 from deblend_sofia_detections.config.config import defaults
 from deblend_sofia_detections.support.errors import InputError
-from deblend_sofia_detections.support.system_functions import create_directory
+from deblend_sofia_detections.support.system_functions import join_path,create_directory
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
 from omegaconf import OmegaConf
 
@@ -40,7 +40,7 @@ create_package_name def_file=cube.fits error_generator=tirshaker
     if cfg_input.print_examples:
         default_name = f'{__name__.split(".")[0]}_default.yml' 
         masked_copy = OmegaConf.masked_copy(cfg,\
-                    ['input','general'])
+                    ['input','general','directories'])
            
         with open(default_name,'w') as default_write:
             default_write.write(OmegaConf.to_yaml(masked_copy))
@@ -73,38 +73,99 @@ configuration_file = ''')
 
     #open the input parameter file to obtain the data cube and output locations
     cfg = read_parameter_input(cfg)
-
-    cfg = directory_check(cfg)    
+    cfg = directory_check(cfg)  
+    if cfg.directories.run_directory == os.getcwd():
+        os.chdir(cfg.directories.run_directory)
+    cfg = background_check(cfg)
     return cfg
 
 
 def directory_check(cfg):
-
-    for test_dir in [cfg.internal.data_directory, cfg.internal.sofia_directory, cfg.internal.run_directory]:
+    dirs = ['data_directory', 'run_directory', 'ancillary_directory', 'watershed_directory']
+    if cfg.sofia.directory[-1] != '/':
+        cfg.sofia.directory += '/'
+    # make full paths for defaults    
+    if cfg.directories.ancillary_directory == 'ancillary_data':
+        cfg.directories.ancillary_directory = join_path(cfg.directories.data_directory,
+            cfg.directories.ancillary_directory)
+    if cfg.directories.watershed_directory == 'Watershed_Output':
+        cfg.directories.watershed_directory = join_path(cfg.sofia.directory,
+            cfg.directories.watershed_directory)
+    for attr in dirs:
+        test_dir = getattr(cfg.directories, attr)
+        if test_dir[-1] != '/':
+            test_dir += '/'
+            setattr(cfg.directories , attr, test_dir)
+    
+    for test_dir in [cfg.directories.data_directory, cfg.directories.run_directory
+        , cfg.directories.ancillary_directory, cfg.sofia.directory, cfg.directories.watershed_directory]:
         if not os.path.isdir(test_dir):
-            raise InputError(f'''The directory {test_dir} does not exist.''')
+            if test_dir in [cfg.directories.ancillary_directory, cfg.directories.watershed_directory]:
+                create_directory(test_dir)
+            else:
+                raise InputError(f"The directory {test_dir} does not exist. Please provide a correct directory.")
+    
+    if cfg.general.debug:
+        create_directory('debug_products', base_directory=cfg.directories.ancillary_directory)
+    
+    if cfg.general.verbose:
+        print(f'''Checked the directories:
+            {cfg.directories.data_directory}   
+            {cfg.directories.run_directory}
+            {cfg.directories.ancillary_directory}
+            {cfg.sofia.directory}
+        ''')
+    
     return cfg
 
 
 def read_parameter_input(cfg):
-    cfg.internal.run_directory = os.getcwd()
     parameters = load_sofia_input_file(cfg.input.sofia_parameters)
     input_pathname,parameter_file = os.path.split(cfg.input.sofia_parameters)
-    cfg.internal.sofia_parameter_file = parameter_file
+    cfg.sofia.parameter_file = parameter_file
+   
     if input_pathname == '' or input_pathname[0] != '/':
-        input_pathname = os.path.join(os.getcwd(),input_pathname)
+        input_pathname = join_path(os.getcwd(),input_pathname)
+    cfg.sofia.parameter_path = input_pathname
     data_path,data_file = os.path.split(parameters['input.data'])
+  
     if data_path == '' or data_path[0] != '/':
-        cfg.internal.data_directory = f'{input_pathname}{data_path}'
+        cfg.directories.data_directory = join_path(
+            input_pathname,data_path)
     else:
-        cfg.internal.data_directory = data_path
-    cfg.internal.ancillary_directory = f'{cfg.internal.data_directory}/ancillary_data'
-    cfg.internal.data_cube = data_file
-    cfg.internal.sofia_basename = parameters['output.filename']
-    if cfg.internal.sofia_basename == '':
-        cfg.internal.sofia_basename = os.path.splitext(data_file)[0]
-    cfg.internal.sofia_directory = parameters['output.directory']
-    if cfg.internal.sofia_directory == '' or cfg.internal.sofia_directory[0] != '/':
-        cfg.internal.sofia_directory = os.path.join(input_pathname,cfg.internal.sofia_directory)
+        cfg.directories.data_directory = join_path(data_path)
+   
+    cfg.sofia.original_data_cube = data_file
+    cfg.sofia.basename = parameters['output.filename']
+    if cfg.sofia.basename == '':
+        cfg.sofia.basename = os.path.splitext(data_file)[0]
+    cfg.sofia.directory = join_path(input_pathname, parameters['output.directory'])
+    
+    return cfg
+
+def background_check(cfg):
+    if cfg.input.manual_optical_image[0] is not None:
+        cfg.internal.optical_background = f'{cfg.directories.ancillary_directory}/Manual_Optical_Background.fits'
+        cfg.internal.cleaned_optical_background = f'{cfg.directories.ancillary_directory}/Cleaned_Manual_Optical_Background.fits'
+    else:
+        cfg.internal.optical_background = f'{cfg.directories.ancillary_directory}/DSS_Optical_Background.fits'
+        cfg.internal.cleaned_optical_background = f'{cfg.directories.ancillary_directory}/Cleaned_DSS_Optical_Background.fits'
+    # if we want original images we delete the processed stuf if existing
+    if os.path.isfile(cfg.internal.optical_background) and cfg.input.original_images:
+        if cfg.general.verbose:
+            print(f'Deleting existing optical background image: {cfg.internal.optical_background}')
+        os.remove(cfg.internal.optical_background)
+    
+    if cfg.input.original_images:
+        if cfg.general.verbose:
+            print(f'Deleting any existing cleaned optical background image: {cfg.internal.cleaned_optical_background}')
+        path,name = os.path.split(cfg.internal.cleaned_optical_background)
+        basename = os.path.splitext(name)[0]
+        for file in os.listdir(path):
+            if file.startswith(basename):
+                if cfg.general.verbose:
+                    print(f'Deleting existing cleaned optical background image: {join_path(path,file)}')
+                os.remove(join_path(path,file))
+     
     
     return cfg

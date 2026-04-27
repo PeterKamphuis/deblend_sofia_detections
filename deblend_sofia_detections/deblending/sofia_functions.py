@@ -4,7 +4,7 @@ from deblend_sofia_detections.support.errors import InputError,SofiaError
 from deblend_sofia_detections.support.support_functions import \
     convert_pix_columns_to_arcsec,translate_string_to_unit,get_source_cat_name,\
     get_start_end_locations,convert_pixel_values_to_original
-from deblend_sofia_detections.support.system_functions import convert_ps
+from deblend_sofia_detections.support.system_functions import convert_ps,join_path
 
 try:
     from importlib.resources import open_text as pack_open_txt
@@ -15,12 +15,21 @@ except ImportError:
 from astropy.table import QTable
 from astropy.io import votable
 from astropy import units as u
+PROFILING = False  # set to True to enable memory profiling
+if PROFILING:
+    from memory_profiler import profile
+else:
+    def profile(stream=None):
+        def decorator(func):
+            return func
+        return decorator
 
 import os
 import numpy as np
 import shutil
 import subprocess
 import string
+import warnings
 
 
 def check_parameters(table,variables=None,no_conversion=False):
@@ -105,7 +114,9 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
     sofia_run, sofia_warnings_are_annoying = sfrun.communicate()
     if cfg.general.verbose:
         print(sofia_run.decode("utf-8"))
-        print(sofia_warnings_are_annoying.decode("utf-8"))
+        if cfg.general.debug:
+             print(sofia_warnings_are_annoying.decode("utf-8"))
+        #print(sofia_warnings_are_annoying.decode("utf-8"))
     if sfrun.returncode == 8:
         with open(f'sofia_output.txt','w') as file:
             file.writelines(sofia_run.decode("utf-8"))
@@ -137,18 +148,21 @@ def load_sofia_basename(filename):
     input_file = load_sofia_input_file(filename)
     return os.path.basename(os.path.splitext(input_file['input.data'])[0])
 
-def load_sofia_catalogue(filename, variables = None,verbose = False, no_conversion=False):
+def load_sofia_catalogue(filename, variables = None,verbose = False, 
+        no_conversion=False,debug=False):
     '''Read a specified sofia table into a Astropy QTable'''     
     if filename.endswith('.xml'): 
-        sources = read_sofia_xml(filename,variables=variables,verbose=verbose)
+        sources = read_sofia_xml(filename,verbose=verbose, debug=debug)
     else:
         sources = read_sofia_txt(filename,variables=variables,verbose=verbose)
 
     sources = check_parameters(sources,variables=variables,no_conversion=no_conversion) 
        
     if verbose:
-        print(f'We found this table for the file {filename}')
-        print(sources)
+        print(f'We found the following {len(sources)} sources to deblend. \n')
+        for source in sources:
+            print(f"Source {source['name']}. \n")
+   
     return sources
 
 def load_sofia_cat_header(lines):
@@ -272,11 +286,11 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
         for g in to_move:
             old_name = f'{indir}{basename}_cubelets/{basename}_{old_new_ids[new_id]}{g}'
             if os.path.exists(old_name):
-                new_name = f'{cfg.internal.sofia_directory}/{originalbasename}_cubelets/{originalbasename}_{new_id}{g}'
+                new_name = f'{cfg.sofia.directory}/{originalbasename}_cubelets/{originalbasename}_{new_id}{g}'
                 #print(f'Moving {old_name} to {new_name}')
                 os.rename(old_name, new_name)        
     #And remove the original unsplit source
-    original_source_file = f'{cfg.internal.sofia_directory}/{originalbasename}_cubelets/{originalbasename}_{original_id}'
+    original_source_file = f'{cfg.sofia.directory}/{originalbasename}_cubelets/{originalbasename}_{original_id}'
     for g in to_move:
         file_to_remove = f'{original_source_file}{g}'
         #print(f'Trying to remove {file_to_remove}')
@@ -285,69 +299,69 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
             os.remove(file_to_remove)
 
     #move the watershed output 
-    oldname = f'{cfg.internal.sofia_directory}/Watershed_Output/'
-    newname = f'{cfg.internal.sofia_directory}/{originalbasename}_cubelets/Watershed_Output_{original_id}/'
-    shutil.rmtree(newname) if os.path.exists(newname) else None
-    os.rename(oldname, newname)      
+    #oldname = f'{cfg.sofia.directory}/Watershed_Output/'
+    #newname = f'{cfg.sofia.directory}/{originalbasename}_cubelets/Watershed_Output_{original_id}/'
+    #shutil.rmtree(newname) if os.path.exists(newname) else None
+    #os.rename(oldname, newname)      
 
 
 def obtain_sofia_id(base_name, cube_name):
     tmp,cube_file = os.path.split(cube_name)
     split_main = cube_file.split(base_name)
     parts = split_main[1].split('_')
-    id  = int(parts[1])
+    id  = parts[1]
     return id,cube_file
 
-def read_sofia_table(cfg,sofia_directory='./',sofia_basename=None,
-        no_conversion=False,
-        force_text = False):
-    '''Locate and read a sofia catolgue into an astropy table '''
-    if not os.path.isfile(f'{sofia_directory}/{sofia_basename}_cat.xml')\
-        and not os.path.isfile(f'{sofia_directory}/{sofia_basename}_cat.txt'):
-        print(f'''No sofia table found in {sofia_directory}/{sofia_basename}_cat.
-probably no sources were found or you made an input error. ''')
-        return None,sofia_basename,None
+def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=None,
+                    sofia_basename=None):
+    '''Locate and read a sofia catalogue into an astropy table '''
+    if sofia_directory is None:
+        sofia_directory = cfg.sofia.directory
+    if sofia_basename is None:
+        sofia_basename = cfg.sofia.basename   
+    
+    full_base = f'{sofia_directory}{sofia_basename}'
 
-    if os.path.isfile(f'{sofia_directory}/{sofia_basename}_cat.xml') and not force_text:
+    if os.path.isfile(f'{full_base}_cat.xml') and not force_text:
         #If we have an xml we prefer to read that
-        table_name = f'{sofia_directory}/{sofia_basename}_cat.xml'
-    elif os.path.isfile(f'{sofia_directory}/{sofia_basename}_cat.txt'):
-        table_name = f'{sofia_directory}/{sofia_basename}_cat.txt'
+        table_name = f'{full_base}_cat.xml'
+    elif os.path.isfile(f'{full_base}_cat.txt'):
+        table_name = f'{full_base}_cat.txt'
     else:
-        print(f'''No sofia table found in {sofia_directory} for {cfg.internal.data_cube}.
-probably no sources were found.''')
-        return None,sofia_basename,None
+        if cfg.general.verbose:
+            print(f'''No sofia table found in {cfg.sofia.directory} for {cfg.sofia.data_cube}.
+no catalogues was found ({full_base}_cat)
+probably no sources were found or you made a mistake.''')
+        return None,None
     req_variables = ['name','f_sum','err_f_sum','id','ell3s_maj',
         'ell3s_min','w20','ra','dec','v_sofia','kin_pa','x','y','z',
+        'x_min','x_max','y_min','y_max',
         'f_max','ell_maj','ell_min','rms','ell_pa']
 
     sources = load_sofia_catalogue(table_name,verbose=cfg.general.verbose,
-            no_conversion=no_conversion,variables= req_variables) 
+            no_conversion=no_conversion,variables= req_variables,debug=cfg.general.debug) 
     if not no_conversion:
-        if cfg.internal.data_cube is None:
-            raise InputError('cubename must be specified if no_conversion is True')
-        sources = convert_pix_columns_to_arcsec(cfg,sources,f'{cfg.internal.data_directory}/{cfg.internal.data_cube}')
+        sources = convert_pix_columns_to_arcsec(cfg,sources,
+            f'{full_base}_mask.fits')
 
-    return sources,sofia_basename,table_name
-
+    return sources,table_name
 
 
-
-def read_sofia_xml(filename,variables=None,verbose=False):
-    '''Read the sofia xml file into a Astropy QTable'''
-  
-    if verbose:
-        print(f'Reading the sofia catalogue {filename}')
+def read_sofia_xml(filename,verbose=False,debug=False):
+    '''Read the sofia xml file into a Astropy QTable'''  
+    if debug:
+        print(f'Reading the sofia catalogue {filename}. \n')
     # Read the xml file
-    table = QTable(votable.parse(filename).get_first_table().to_table())
-  
-    #sources = QTable.read(filename, format='xml')
-    actual_colnames = [x for x in table.colnames]
-    lower_colnames = [x.lower() for x in actual_colnames]
+    # an initial invocation of Qtable/table makes a memory leak, this appears unavoidable.
+    # It doesn't appear to accumalate
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        table = QTable(votable.parse(filename).get_first_table().to_table())
+        actual_colnames = [x for x in table.colnames]
+        lower_colnames = [x.lower() for x in actual_colnames]
     
     if 'id' in lower_colnames:
         if not isinstance(table[actual_colnames[lower_colnames.index('id')]][0],(str,np.str_)):
-            print(type(table[actual_colnames[lower_colnames.index('id')]][0]))    
             table.add_column([f'{int(x)}' for x in 
                 table[actual_colnames[lower_colnames.index('id')]]], name='str_id')
             table.remove_column(actual_colnames[lower_colnames.index('id')])
@@ -359,16 +373,12 @@ def read_sofia_xml(filename,variables=None,verbose=False):
             table.remove_column(col)
             table.rename_column('tmp',col)
           
-       #if isinstance(unit, str):
-        #    table['unit'][table['unit'] == unit] = translate_string_to_unit(unit)       
-
-    #Remove unwanted 
-    if verbose:
+    if debug:
         print(f'We found the following columns in the sofia catalogue: {actual_colnames}')
     return table
 
 
-def read_sofia_txt(filename,variables=None,verbose=False):
+def read_sofia_txt(filename,variables=None,verbose=False,debug=False):
     with open(filename) as tmp:
         lines = tmp.readlines()
     if variables is None:
@@ -381,7 +391,7 @@ def read_sofia_txt(filename,variables=None,verbose=False):
                     break    
     row_start, input_columns, column_locations,convert_units,sources = \
         load_sofia_cat_header(lines) 
-    if verbose:
+    if debug:
         print(f'We found the following columns in the sofia catalogue: {input_columns}')
     for line in lines[row_start:]: 
         if line.strip() == '':
@@ -397,11 +407,24 @@ def read_sofia_txt(filename,variables=None,verbose=False):
                 if col in ['id']:
                     construct_row.append(line[start:end].strip())
                 else:
-                    #print(f'col: {col} start: {start} end: {end} value: {line[start:end]}')
                     construct_row.append(float(line[start:end].strip())\
                         * convert_units[i])
         sources.add_row(construct_row)
     return sources
+
+def rerun_sofia(cfg):
+    #First get the original input
+    sofia_temp = load_sofia_input_file(join_path(
+        cfg.sofia.parameter_path,cfg.sofia.parameter_file))
+
+    sofia_temp['input.mask'] = f'{cfg.sofia.directory}/{cfg.sofia.basename}_mask.fits'
+    sofia_temp['scfind.enable'] = 'false'
+    sofia_temp['reliability.enable'] = 'false'  # This has to be off else it crashes on no negative sources
+    sofia_temp['linker.enable'] = 'false'
+    sofia_temp['dilation.enable'] = 'false'
+    write_sofia(sofia_temp,f'{cfg.sofia.parameter_path}/deblend_sofia.par')
+    execute_sofia(cfg,run_directory=cfg.sofia.parameter_path,
+        sofia_parameter_file='deblend_sofia.par')
 
 def set_sofia(sofia_temp, cube_name, mask, outdir):
     """
@@ -439,21 +462,23 @@ def update_sofia_catalogue(cfg, cube_name= None,base_name = None, outdir='./',ba
     
     #load the original sofia table
  
-    sources,sofia_basename,table_name = read_sofia_table(cfg, 
-        sofia_directory=cfg.internal.sofia_directory,
-        sofia_basename=cfg.internal.sofia_basename,
+    sources,table_name = read_sofia_table(cfg, 
+        sofia_directory=cfg.sofia.directory,
+        sofia_basename=cfg.sofia.basename,
         no_conversion=True)
-    
+    #sofia_basename = os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
     #load the split sources
     
-    split_sources,split_base_name,split_table_name =  read_sofia_table(cfg, 
+    split_sources,split_table_name =  read_sofia_table(cfg, 
         sofia_directory=f'{outdir}/Sofia_Output',
         sofia_basename=os.path.splitext(cube_file_name)[0],no_conversion=True) 
-    print(split_sources,outdir,split_base_name,os.path.splitext(cube_file_name)[0])
-    # We need to update pixel values to the original cube
+    
+    split_base_name = os.path.splitext(os.path.split(split_table_name)[-1])[0].split('_cat')[0]
+   
+     # We need to update pixel values to the original cube
   
     split_sources = convert_pixel_values_to_original(split_sources,
-                cube_name,f'{cfg.internal.data_directory}/{cfg.internal.data_cube}')
+                cube_name,f'{cfg.directories.data_directory}/{cfg.sofia.original_data_cube}')
     
     alphabet = list(string.ascii_lowercase)
     split_sources['id'] = split_sources['id'].astype('<U3')
@@ -480,12 +505,12 @@ def update_sofia_catalogue(cfg, cube_name= None,base_name = None, outdir='./',ba
     sources.sort('id')    
   
     #Write the new table to over the old one
-    write_sofia_catalogue_xml(sources,f'{cfg.internal.sofia_directory}/{sofia_basename}_cat.xml')
-    write_sofia_catalogue_txt(sources,f'{cfg.internal.sofia_directory}/{sofia_basename}_cat.txt')
+    write_sofia_catalogue_xml(sources,f'{cfg.sofia.directory}/{cfg.sofia.basename}_cat.xml')
+    write_sofia_catalogue_txt(sources,f'{cfg.sofia.directory}/{cfg.sofia.basename}_cat.txt')
 
 
     # move the split sources to the original directory
-    move_sources(cfg,f'{outdir}Sofia_Output/',old_new_ids,sofia_basename
+    move_sources(cfg,f'{outdir}Sofia_Output/',old_new_ids,cfg.sofia.basename
                  ,split_base_name,sofia_id,base_dir=base_dir)
 
 

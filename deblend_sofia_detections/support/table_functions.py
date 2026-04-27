@@ -1,12 +1,14 @@
 from deblend_sofia_detections.support.errors import TableError,InputError
 from deblend_sofia_detections.support.support_functions import\
-    is_real_unit, isquantity
+    is_real_unit, isquantity, translate_string_to_unit, convertRADEC
 
+from astropy import units as u
 from astropy.table import QTable,Table,Row
 
 import copy
 import os
 import pickle
+import numpy as np
 
 def check_table_length(table):
     " Check the length of an astropy table or row"
@@ -57,39 +59,48 @@ def combine_tables(tableone, tabletwo, column_indicators=[None,None]):
                 column_indicators[i] is None else col
             if colname in input_columns:
                 raise ValueError(f"Column '{colname}' is already in the constructor.")
-            
+
             input_columns.append(colname)
-            
+
             # Get the unit of the column if available
+            unit = None
             if hasattr(table[col], 'unit'):
                 unit = table[col].unit
             else:
-                # Check if the first element has a unit (in case it's a Quantity column)
-                if hasattr(table[col][0], 'unit'):
-                    unit = table[col][0].unit
-                else:
+                try:
+                    if hasattr(table[col][0], 'unit'):
+                        unit = table[col][0].unit
+                except Exception:
                     unit = None
-            
+
+            # Normalize empty / missing units
+            if unit in ['', 'None']:
+                unit = None
+
             # Check for valid units
-            if not unit is None and not is_real_unit(unit):
+            if unit is not None and not is_real_unit(unit):
                 raise ValueError(f"The unit '{unit}' is not recognized.")
-            
+
             convert_units.append(unit)
             table_units.append(unit)
-            dtypes.append(table[col].dtype)
-        
-        # Process rows in the table
+            try:
+                dtypes.append(table[col].dtype)
+            except AttributeError:
+                if isinstance(table[col], str):
+                    dtypes.append(str)
+                else:
+                    dtypes.append(float)
+                      # Process rows in the table
         for j in range(check_table_length(table)):
             # Handle the row depending on whether it's a Table or Row
-            rowin = table[j] if isinstance(table, Table) else table
-            
+            rowin = table[j] if isinstance(table, (Table, QTable)) else table
+
             newrow = []
             for value, tabunit in zip(rowin, table_units):
                 # Convert value to the proper unit if necessary
-                
-                if not isquantity(value) and not tabunit is None and not\
+                if not isquantity(value) and tabunit is not None and not\
                     tabunit == f'str':
-                    value *=tabunit 
+                    value *= tabunit
                 try:    
                     newrow.append(value.unmasked)
                 except AttributeError:
@@ -158,6 +169,33 @@ def identify_velocity_column(table):
         raise TableError('No velocity column found in the table.')
     
 
+def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
+    table_base,ext = os.path.splitext(table_in)
+    table_filename = os.path.basename(os.path.normpath(table_base))
+    if pickle_output is not None:
+        pickle_file = f'{pickle_output}{table_filename}.pkl'
+    else:           
+        pickle_file = f'{table_base}.pkl'   
+    
+    if (not (fresh_read or cfg.input.original_tables) and os.path.exists(pickle_file)): 
+        with open(pickle_file,'rb') as tmp:
+            table = pickle.load(tmp)
+        if type(table) != QTable:
+            raise InputError(f'Your pickle file is not a Quantity table, we do not know how to read it.')
+    elif ext == '.pkl':
+        with open(table_in,'rb') as tmp:
+            table = pickle.load(tmp)
+    elif ext == '.txt':
+        table = read_text_table(table_in)
+        with open(pickle_file,'wb') as tmp:
+            pickle.dump(table,tmp)
+    elif ext == '.csv':
+        table = read_text_table(table_in,seperator=',')
+        with open(pickle_file,'wb') as tmp:
+            pickle.dump(table,tmp)
+    else:
+        raise InputError(f'We do not recognize the extension {ext}, we do not know how to read the file.')
+    return table
 
 def read_manual_table(cfg, need_velocity =True):    
     manual_table = None
@@ -169,12 +207,8 @@ def read_manual_table(cfg, need_velocity =True):
             raise InputError(f'Could not find manual input table {table_in}')
         if cfg.general.verbose:     
             print(f'Loading manual input table {table_in}')
-        with open(f'{table_in}','rb') as tmp:
-            try:
-                manual_table_small = pickle.load(tmp)
-            except Exception as e:
-                raise InputError(f''' We are expecting a pickle table to ensure speedy loading. 
-Error loading manual input table {table_in}: {e}''')
+            manual_table_small = load_table(table_in, cfg=cfg)
+
         if manual_table is None:
             manual_table = manual_table_small
         else:
@@ -184,3 +218,141 @@ Error loading manual input table {table_in}: {e}''')
         and need_velocity:
         manual_table = identify_velocity_column(manual_table) 
     return manual_table
+
+
+def read_text_table(file,seperator=' '):
+    sources = None
+    with open(file) as tmp:
+        lines =tmp.readlines()
+    
+    for i,line in enumerate(lines):
+        print(f"\r Processing the text table: {(i+1)/len(lines)*100.:.1f} % done. ",\
+             end =" ",flush = True) 
+        
+        tmp =line.split(seperator)
+     
+        if line.strip() in ['','#','%']:
+            pass
+        elif line[0] in ['#','%']:
+            #These two ifs can not be combine as then it will process lines with comments without the seperator
+            if len(tmp) > 1:
+                tmp =line[1:].split(seperator)
+                if tmp[0].strip().lower() in ['name','id','galaxy']:
+                    # get the present columns
+                    input_columns  = [x.strip() for x in tmp]
+                   
+                    #determin their location in the line
+                    column_locations = []
+                    for col in input_columns:
+                        column_locations.append(line.find(col)+len(col))
+                        columns_triggered = True
+                        # Modify certain columns to a unified name
+                        if col.lower() in ['name','id','galaxy']:
+                            if not 'name' in [x.lower() for x in input_columns] or\
+                                col.lower() == 'name':
+                                input_columns[input_columns.index(col)] = 'Name'
+                            
+                        if 'ra' in col.lower():
+                            input_columns[input_columns.index(col)] = 'RA'
+                        if 'dec' in col.lower():
+                            input_columns[input_columns.index(col)] = 'DEC'
+                      
+                        if ('d25' in col.lower() or  'd_25' in col.lower())\
+                            and not ('err' in col.lower() or 'arcsec' in col.lower()):
+                            input_columns[input_columns.index(col)] = 'D25'
+                        if 'SFR' in col.lower():
+                            if not 'SFR' in input_columns:
+                                input_columns[input_columns.index(col)] = 'SFR'
+                        if 'm' in col.lower() and  '*' in col.lower() :
+                            input_columns[input_columns.index(col)] = 'M*' 
+                        if 'dist' in col.lower()  or  'D' == col :
+                            input_columns[input_columns.index(col)] = 'Distance'
+                        if 'sys' in col.lower():
+                            input_columns[input_columns.index(col)] = 'Velocity'
+                   
+                    
+                    
+                elif columns_triggered:
+                    columns_triggered = False
+                    
+                    input_units  = [x.strip().lower() for x in tmp]
+                    convert_units = []
+                    for unit in input_units:
+                        convert_units.append(translate_string_to_unit(unit))
+                    for i,column in enumerate(input_columns):
+                        if column.lower() in ['id','name','galaxy','identifier',
+                            'object','typ','type','morph','morphology']:
+                            convert_units[i] = 'str'
+
+                    dtypes = []
+                    for i,unit in enumerate(convert_units):
+                        if unit == 'str' or unit == str:
+                            dtypes.append(str)
+                            convert_units[i] = None
+                        elif unit == bool:
+                            dtypes.append(bool)
+                            convert_units[i] = None
+                        elif unit == u.pix:
+                            dtypes.append(float)
+                        else:
+                            dtypes.append(np.float64)
+                    # Create the table with the columns 
+                    convert_units = [u.dimensionless_unscaled if x in [bool,str,int,'str'] else x for x in convert_units]
+                    sources = QTable(names=input_columns,units=convert_units,dtype=dtypes)
+                       
+        else:
+           
+            construct_row=[]
+            name = tmp[input_columns.index('Name')]
+            for i,col in enumerate(input_columns):
+                if seperator == ' ':
+                    if i == 0:
+                        start = 0
+                    else:
+                        start = column_locations[i-1]
+                    end = column_locations[i]
+                    value = line[start:end].strip()
+                else:
+                    value= tmp[i]
+                
+                if convert_units[i] == 'str':
+                    construct_row.append(value.strip())
+                elif convert_units[i] in ['hms','dms']:
+                
+                    if sources[input_columns[i]].unit != u.deg:
+                        tmp_column= sources[input_columns[i]]
+                        sources[input_columns[i]] = Column(tmp_column.value,\
+                                unit=u.deg)
+                    if convert_units[i] == 'hms':
+                        deg,dummy = convertRADEC(value,'0d0m0s',invert=True)
+                        construct_row.append(deg*u.deg)
+                        
+                    else:
+                      
+                        dummy,deg = convertRADEC('0h0m0s',value,invert=True)
+                        construct_row.append(deg*u.deg)
+                else:
+                    if dtypes[i] == bool:
+                        if value.strip().lower() in ['true','yes','1']:
+                            construct_row.append(True)
+                        elif value.strip().lower() in ['false','no','0']:
+                            construct_row.append(False)
+                        else:
+                            raise InputError(f'Value |{value}| is not a valid boolean.')
+                        #construct_row.append(bool(value))
+                      
+                    elif dtypes[i] == str:
+                        construct_row.append(str(value))
+                    elif dtypes[i] == int:
+                        construct_row.append(int(value))
+                    
+                    else:
+                        try:
+                            construct_row.append(float(value)*convert_units[i])
+                        except ValueError:
+                            print(f"Value '{value}' could not be converted to float with unit {convert_units[i]}. Setting to NaN.")
+                            construct_row.append(np.nan * convert_units[i])
+            sources.add_row(construct_row)
+    print(f"\n")
+  
+    return sources
