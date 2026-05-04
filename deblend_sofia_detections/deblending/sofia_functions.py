@@ -110,7 +110,7 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
         sofia_parameter_file='sofia_input.par'):
     indir = os.getcwd()
     os.chdir(f'{run_directory}')
-    sfrun = subprocess.Popen(['sofia',sofia_parameter_file], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+    sfrun = subprocess.Popen([cfg.internal.sofia,sofia_parameter_file], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
     sofia_run, sofia_warnings_are_annoying = sfrun.communicate()
     if cfg.general.verbose:
         print(sofia_run.decode("utf-8"))

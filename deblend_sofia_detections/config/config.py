@@ -59,7 +59,7 @@ class Internal:
     optical_background: str = MISSING
     cleaned_optical_background: str = MISSING
     optical_kernel_fwhm: float = 3.
-  
+    sofia: str = 'sofia'
 @dataclass
 class defaults:
     print_examples: bool = False
