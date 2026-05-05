@@ -74,7 +74,7 @@ configuration_file = ''')
     #open the input parameter file to obtain the data cube and output locations
     cfg = read_parameter_input(cfg)
     cfg = directory_check(cfg)  
-    if cfg.directories.run_directory == os.getcwd():
+    if cfg.directories.run_directory != os.getcwd():
         os.chdir(cfg.directories.run_directory)
     cfg = background_check(cfg)
     return cfg
@@ -128,7 +128,7 @@ def read_parameter_input(cfg):
         input_pathname = join_path(os.getcwd(),input_pathname)
     cfg.sofia.parameter_path = input_pathname
     data_path,data_file = os.path.split(parameters['input.data'])
-  
+   
     if data_path == '' or data_path[0] != '/':
         cfg.directories.data_directory = join_path(
             input_pathname,data_path)
@@ -139,7 +139,8 @@ def read_parameter_input(cfg):
     cfg.sofia.basename = parameters['output.filename']
     if cfg.sofia.basename == '':
         cfg.sofia.basename = os.path.splitext(data_file)[0]
-    cfg.sofia.directory = join_path(input_pathname, parameters['output.directory'])
+    cfg.sofia.directory = join_path( cfg.directories.data_directory 
+                                    , parameters['output.directory'])
     
     return cfg
 

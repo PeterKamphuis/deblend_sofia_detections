@@ -110,7 +110,7 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
         sofia_parameter_file='sofia_input.par'):
     indir = os.getcwd()
     os.chdir(f'{run_directory}')
-    sfrun = subprocess.Popen(['sofia',sofia_parameter_file], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
+    sfrun = subprocess.Popen([cfg.internal.sofia,sofia_parameter_file], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
     sofia_run, sofia_warnings_are_annoying = sfrun.communicate()
     if cfg.general.verbose:
         print(sofia_run.decode("utf-8"))
@@ -329,7 +329,7 @@ def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=
         table_name = f'{full_base}_cat.txt'
     else:
         if cfg.general.verbose:
-            print(f'''No sofia table found in {cfg.sofia.directory} for {cfg.sofia.data_cube}.
+            print(f'''No sofia table found in {cfg.sofia.directory} for {cfg.sofia.original_data_cube}.
 no catalogues was found ({full_base}_cat)
 probably no sources were found or you made a mistake.''')
         return None,None
