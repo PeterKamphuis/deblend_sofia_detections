@@ -127,9 +127,9 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
     optical_markers = copy.deepcopy(optical_markers_in)
     if len(np.unique(optical_markers))-1 <= 1:
         if cfg.general.verbose:
-            print(f"We found {len(np.unique(optical_markers))-1} optical sources in the cube {source_id} so we will not use the optical deblending results for the peak deblending.")
-        raise InputError(f"We found {len(np.unique(optical_markers))-1} optical sources in the cube {source_id} so we will not use the optical deblending results for the peak deblending.")
-    
+            print(f"We found {len(np.unique(optical_markers))-1} optical markers in the cube {source_id} so we will not use the optical deblending results for the peak deblending.")
+        return [False, 1000.]
+       
     if len(data[0].data.shape) == 2:
         if cfg.general.verbose:
             print(f"Running 2D deblending based on an optical image for moment 0 \n")
@@ -184,9 +184,14 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
     if cfg.general.verbose:
         print(f"Checking the size of the sources in the {type_ind} and removing sources that are smaller than the beam.")
     new_mask_HI = check_source_size(cfg,new_mask,data[0].header,)
-    new_mask_HI = np.asarray(new_mask_HI).astype(np.int8)
+    new_mask_HI = np.array(new_mask_HI,dtype=int)
+    hdr = copy.deepcopy(data[0].header)
+    if 'BSCALE' in hdr:
+        del hdr['BSCALE']
+    if 'BZERO' in hdr:
+        del hdr['BZERO']
     fits.writeto(f"{outdir}deblended_{type_ind}_mask_based_on_optical.fits",
-        new_mask_HI,header=data[0].header, overwrite=True)
+        new_mask_HI,header=hdr, overwrite=True)
 
     if len(np.unique(new_mask_HI))-1 <= 1:
         sources = [False, 1000.]
@@ -253,7 +258,10 @@ def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
     res3d = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
         connectivity=1,compactness=cfg.input.compactness)
     finalhdr = copy.deepcopy(cube[0].header)# Save the results
-
+    if 'BSCALE' in finalhdr:
+        del finalhdr['BSCALE']
+    if 'BZERO' in finalhdr:
+        del finalhdr['BZERO']
     res3d = np.array(res3d, dtype=int)
     final_mask_name = f"{outdir}deblended_cube_mask_based_on_peaks.fits"
     fits.writeto(final_mask_name, res3d,
@@ -283,7 +291,10 @@ def deblend_sofia_detections(cfg):
     if cfg.general.verbose:
         print(f"Checking the sources in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
 
-    
+    if cfg.general.debug:
+        print(f'We use this configuration for the deblending:')
+        for key, value in cfg.__dict__.items():
+            print(f"{key}: {value}")
     #load the original sofia table
     sources,table_name = read_sofia_table(cfg,
         no_conversion = True)
@@ -531,11 +542,12 @@ def load_data(base_name=None,cube_name = None,
 def obtain_final_mask(cfg,cube_name, results,outdir = './'):
     """ Create a final mask for the deblended sources."""
     # This is not based on the results but on the input
-    if cfg.input.use_peak_deblending:
+    if cfg.input.use_peak_deblending and results['hi_peaks'][0]:
         final_mask_name = f"{outdir}deblended_cube_mask_based_on_peaks.fits"
-    elif cfg.input.use_cube_deblending and cfg.use_optical_deblending:
+    elif cfg.input.use_cube_deblending and cfg.input.use_optical_deblending\
+        and results['optical_cube'][0]:
         final_mask_name = f"{outdir}deblended_cube_mask_based_on_optical.fits"
-    elif cfg.use_optical_deblending: 
+    elif cfg.input.use_optical_deblending and results['optical_moment0'][0]: 
         path,name = os.path.split(cube_name)
         basename = os.path.splitext(name)[0].removesuffix('_cube')
         if cfg.general.verbose:

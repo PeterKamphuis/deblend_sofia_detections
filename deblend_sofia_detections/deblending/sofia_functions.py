@@ -329,7 +329,7 @@ def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=
         table_name = f'{full_base}_cat.txt'
     else:
         if cfg.general.verbose:
-            print(f'''No sofia table found in {cfg.sofia.directory} for {cfg.sofia.data_cube}.
+            print(f'''No sofia table found in {cfg.sofia.directory} for {cfg.sofia.original_data_cube}.
 no catalogues was found ({full_base}_cat)
 probably no sources were found or you made a mistake.''')
         return None,None
