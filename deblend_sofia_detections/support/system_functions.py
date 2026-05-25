@@ -66,4 +66,9 @@ def join_path(*args):
     if len(args[-1]) > 0 :
         if args[-1][-1] == '/':
             ini = ini+'/'
+    try:
+        os.path.splitext(args[-1])[1]
+    except IndexError:
+        ini = ini + '/'
+    
     return ini

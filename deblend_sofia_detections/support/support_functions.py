@@ -1,11 +1,4 @@
-PROFILING = False  # set to True to enable memory profiling
-if PROFILING:
-    from memory_profiler import profile
-else:
-    def profile(stream=None):
-        def decorator(func):
-            return func
-        return decorator
+from deblend_sofia_detections.support.profiling import profile
 
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
@@ -286,8 +279,8 @@ def isquantity(value):
             verdict = False
        
     return verdict
-fn = open('profiler_logs/match_size.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+
+@profile('profiler_logs/match_size.log')
 def match_size(matcharray, inarray,max=False):
     """
     Match the size of inarray to matcharray by regridding.

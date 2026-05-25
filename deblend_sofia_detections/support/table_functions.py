@@ -207,7 +207,7 @@ def read_manual_table(cfg, need_velocity =True):
             raise InputError(f'Could not find manual input table {table_in}')
         if cfg.general.verbose:     
             print(f'Loading manual input table {table_in}')
-            manual_table_small = load_table(table_in, cfg=cfg)
+        manual_table_small = load_table(table_in, cfg=cfg)
 
         if manual_table is None:
             manual_table = manual_table_small

@@ -15,18 +15,9 @@ except ImportError:
 from astropy.table import QTable
 from astropy.io import votable
 from astropy import units as u
-PROFILING = False  # set to True to enable memory profiling
-if PROFILING:
-    from memory_profiler import profile
-else:
-    def profile(stream=None):
-        def decorator(func):
-            return func
-        return decorator
 
 import os
 import numpy as np
-import shutil
 import subprocess
 import string
 import warnings
@@ -298,11 +289,7 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
             #print(f'Removing {file_to_remove}')
             os.remove(file_to_remove)
 
-    #move the watershed output 
-    #oldname = f'{cfg.sofia.directory}/Watershed_Output/'
-    #newname = f'{cfg.sofia.directory}/{originalbasename}_cubelets/Watershed_Output_{original_id}/'
-    #shutil.rmtree(newname) if os.path.exists(newname) else None
-    #os.rename(oldname, newname)      
+       
 
 
 def obtain_sofia_id(base_name, cube_name):

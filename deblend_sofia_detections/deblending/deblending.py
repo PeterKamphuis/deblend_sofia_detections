@@ -17,14 +17,8 @@ from astropy.wcs import WCS
 
 from skimage.segmentation import watershed
 from photutils.segmentation import detect_threshold, detect_sources,  make_2dgaussian_kernel
-PROFILING = False  # set to True to enable memory profiling
-if PROFILING:
-    from memory_profiler import profile
-else:
-    def profile(stream=None):
-        def decorator(func):
-            return func
-        return decorator
+from deblend_sofia_detections.support.profiling import profile
+
 
 import astropy.units as u
 import copy
@@ -277,8 +271,7 @@ def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
     close_variables(cube_smooth,mask_smooth,res3d,markers3d)
     return result
 
-fn = open('profiler_logs/deblend_sofia_detections.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+@profile('profiler_logs/deblend_sofia_detections.log')
 def deblend_sofia_detections(cfg):
     """
     Deblend all sources in the given data cube.
@@ -327,8 +320,7 @@ def deblend_sofia_detections(cfg):
         rerun_sofia(cfg)
     close_variables(max_source_id,max_source_id_original,sources)
 
-fn = open('profiler_logs/detect_optical_sources.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+@profile('profiler_logs/detect_optical_sources.log')
 def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     """Detect sources in the optical image to use as markers for the watershed algorithm."""
     optical_image = fits.open(cfg.internal.cleaned_optical_background)
@@ -720,8 +712,7 @@ def update_original_mask(cfg, original_mask_name=None,final_mask_name=None, id=N
         print(f'Writing the mask {original_mask_name}')
         original_mask.writeto(original_mask_name, overwrite=True)
 
-fn = open('profiler_logs/watershed_deblending.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+@profile('profiler_logs/watershed_deblending.log')
 def watershed_deblending(cfg_in, cube_name = None, 
                          mask_name=None, 
                          mom0_name=None,base_dir= '',

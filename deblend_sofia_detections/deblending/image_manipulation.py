@@ -22,14 +22,8 @@ from astroquery.gaia import Gaia
 
 from photutils.background import Background2D # Background2D is used for background subtraction
 
-PROFILING = False  # set to True to enable memory profiling
-if PROFILING:
-    from memory_profiler import profile
-else:
-    def profile(stream=None):
-        def decorator(func):
-            return func
-        return decorator
+from deblend_sofia_detections.support.profiling import profile
+
 
 import astropy.units as u
 import copy
@@ -427,8 +421,8 @@ def split_sources(cfg_in,cube_name, mask,
     close_variables(maskin,split_sources)
     return ret_val
 
-fn = open('profiler_logs/subtract_background.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+
+@profile('profiler_logs/subtract_background.log')
 def subtract_background(cfg,image,wcs):
     """
     Subtracts the background from an image using a 2D background estimation.
