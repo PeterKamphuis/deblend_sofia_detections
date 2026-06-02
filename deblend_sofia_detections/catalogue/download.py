@@ -3,6 +3,7 @@
 
 from deblend_sofia_detections.deblending.image_manipulation import cut_optical
 from deblend_sofia_detections.support.errors import DownloadError
+from deblend_sofia_detections.support.logging import print_log
 from astropy import units as u
 from astropy.io import fits
 from astroquery.skyview import SkyView
@@ -18,8 +19,8 @@ import numpy as np
 def creating_full_FOV_optical(cfg):
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
-    if cfg.general.verbose:
-        print(f'Quering the Sky Survey')
+   
+    print_log(cfg, f'Quering the Sky Survey', case=['verbose'])
     #First we open the moment header 0 to get the extend of the field 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")     
@@ -42,11 +43,11 @@ def creating_full_FOV_optical(cfg):
 
   
     if not cfg.input.manual_optical_image[0] is None:
-        if cfg.general.verbose:
-            print(f'Checking manual input')
+        
+        print_log(cfg, f'Checking manual input', case=['verbose'])
         for identifier in cfg.input.manual_optical_image:
             if os.path.isfile(identifier):
-                print(f'Found manual optical image: {identifier}')
+                print_log(cfg, f'Found manual optical image: {identifier}', case=['verbose'])
             manual_path,manual_file = os.path.split(identifier)
             if manual_path == '':
                 manual_path = './'
@@ -61,11 +62,11 @@ def creating_full_FOV_optical(cfg):
             return
 
 
-    if cfg.general.verbose:
-        print(f'''Obtaining the actual image list with the following parameters:
+    i
+    print_log(cfg, f'''Obtaining the actual image list with the following parameters:
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
-pixels: {size_pixels},''')
+pixels: {size_pixels},''', case=['verbose'])
     SkyView.clear_cache()
     sky_view_list = SkyView.get_image_list(position=obj_coords,
                                    radius = size_quantity,
@@ -76,23 +77,21 @@ pixels: {size_pixels},''')
                                    #survey=['2MASS-K'])
                                    survey=['DSS2 Red'])
 
-    if cfg.general.verbose:
-        print(f'''Obtained {len(sky_view_list)} images from SkyView
+ 
+    print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
 {sky_view_list}
-              ''')
+              ''', case=['verbose'])
     for path in sky_view_list:
-        if cfg.general.verbose:
-            print(f'''Starting the download for {cfg.sofia.original_data_cube}.
-This can take a while.''')
+        print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
+This can take a while.''', case=['verbose'])
         filename = path.split("/")[-1]
-        if cfg.general.verbose:
-           print(f'Downloading {filename} from SkyView from {path}')
+        print_log(cfg, f'Downloading {filename} from SkyView from {path}')
         urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
         if os.path.isfile(f'{cfg.internal.optical_background}'):
-            print("Successfully downloaded the image")
+            print_log(cfg, "Successfully downloaded the image")
             #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
         else:
-            print("Failed to obtain the image from SkyView")
+            print_log(cfg, "Failed to obtain the image from SkyView")
             raise DownloadError(f'''Failed to download the image from SkyView: {path}
 Check your internet connection and the SkyView service status.
 Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.

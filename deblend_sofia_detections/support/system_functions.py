@@ -1,4 +1,4 @@
-
+# Do not import logging here as it uses create directory
 
 from deblend_sofia_detections.support.errors import InputError
 

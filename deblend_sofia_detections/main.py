@@ -14,7 +14,6 @@ from deblend_sofia_detections.deblending.deblending import deblend_sofia_detecti
 import sys
 import traceback
 import warnings
-import os
 
 def warn_with_traceback(message, category, filename, lineno, file=None, line=None):
     log = file if hasattr(file,'write') else sys.stderr
@@ -29,6 +28,7 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 # but it seems to be in the packages.
 def main_with_input(argv):
     cfg = setup_config(argv)
+   
     deblend_sofia_detections(cfg)
    
     

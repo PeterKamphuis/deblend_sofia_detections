@@ -1,7 +1,9 @@
+
+
 from deblend_sofia_detections.support.errors import TableError,InputError
 from deblend_sofia_detections.support.support_functions import\
     is_real_unit, isquantity, translate_string_to_unit, convertRADEC
-
+from deblend_sofia_detections.support.logging import print_log
 from astropy import units as u
 from astropy.table import QTable,Table,Row
 
@@ -9,12 +11,16 @@ import copy
 import os
 import pickle
 import numpy as np
+import warnings
 
 def check_table_length(table):
     " Check the length of an astropy table or row"
-    if isinstance(table,(Table)):
+    if isinstance(table,(QTable)):
         length= len(table)
-    elif isinstance(table,(QTable)):
+        if 'Object Name' in table.colnames and length == 1:
+            if table['Object Name'][0] == 'No object Found':
+                length = 0
+    elif isinstance(table,(Table)):
         length= len(table)
     elif isinstance(table,(Row)):
         length = 1
@@ -113,12 +119,17 @@ def combine_tables(tableone, tabletwo, column_indicators=[None,None]):
                 inputrows[j] += newrow
     
     # Create the combined table
+   
     combined_table = QTable(names=input_columns, units=convert_units, dtype=dtypes)
-    
+   
     # Add rows to the combined table
-    for row in inputrows:
-        combined_table.add_row(row)
-    
+   
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for row in inputrows:
+            combined_table.add_row(row)
+  
+   
     return combined_table
 
 def copy_table_header(input_table):
@@ -135,7 +146,7 @@ def copy_table_header(input_table):
     return copied_table
 
 
-def identify_velocity_column(table):
+def identify_velocity_column(cfg,table):
     """
     Identify the velocity column in a table based on common keywords.
     
@@ -157,7 +168,7 @@ def identify_velocity_column(table):
                     found = True
                     break
                 except Exception as e:
-                    print(f"Error converting {col} to km/s: {e}")
+                    print_log(cfg, f"Error converting {col} to km/s: {e}", case=['verbose'])
                     pass
             else:
                 table['Velocity'] = table[col].copy()
@@ -186,11 +197,11 @@ def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
         with open(table_in,'rb') as tmp:
             table = pickle.load(tmp)
     elif ext == '.txt':
-        table = read_text_table(table_in)
+        table = read_text_table(cfg,table_in)
         with open(pickle_file,'wb') as tmp:
             pickle.dump(table,tmp)
     elif ext == '.csv':
-        table = read_text_table(table_in,seperator=',')
+        table = read_text_table(cfg,table_in,seperator=',')
         with open(pickle_file,'wb') as tmp:
             pickle.dump(table,tmp)
     else:
@@ -205,8 +216,8 @@ def read_manual_table(cfg, need_velocity =True):
             continue
         if not os.path.isfile(table_in):
             raise InputError(f'Could not find manual input table {table_in}')
-        if cfg.general.verbose:     
-            print(f'Loading manual input table {table_in}')
+          
+        print_log(cfg,f'Loading manual input table {table_in}',case=['verbose'])
         manual_table_small = load_table(table_in, cfg=cfg)
 
         if manual_table is None:
@@ -216,11 +227,11 @@ def read_manual_table(cfg, need_velocity =True):
     
     if 'velocity' not in [x.lower() for x in manual_table.colnames]\
         and need_velocity:
-        manual_table = identify_velocity_column(manual_table) 
+        manual_table = identify_velocity_column(cfg,manual_table) 
     return manual_table
 
 
-def read_text_table(file,seperator=' '):
+def read_text_table(cfg,file,seperator=' '):
     sources = None
     with open(file) as tmp:
         lines =tmp.readlines()
@@ -324,12 +335,12 @@ def read_text_table(file,seperator=' '):
                         sources[input_columns[i]] = Column(tmp_column.value,\
                                 unit=u.deg)
                     if convert_units[i] == 'hms':
-                        deg,dummy = convertRADEC(value,'0d0m0s',invert=True)
+                        deg,dummy = convertRADEC(cfg,value,'0d0m0s',invert=True)
                         construct_row.append(deg*u.deg)
                         
                     else:
                       
-                        dummy,deg = convertRADEC('0h0m0s',value,invert=True)
+                        dummy,deg = convertRADEC(cfg,'0h0m0s',value,invert=True)
                         construct_row.append(deg*u.deg)
                 else:
                     if dtypes[i] == bool:
@@ -350,7 +361,9 @@ def read_text_table(file,seperator=' '):
                         try:
                             construct_row.append(float(value)*convert_units[i])
                         except ValueError:
-                            print(f"Value '{value}' could not be converted to float with unit {convert_units[i]}. Setting to NaN.")
+                            print_log(cfg,
+                                f"Value '{value}' could not be converted to float with unit {convert_units[i]}. Setting to NaN.",
+                                case = ['debug'])
                             construct_row.append(np.nan * convert_units[i])
             sources.add_row(construct_row)
     print(f"\n")

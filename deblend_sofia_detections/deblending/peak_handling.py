@@ -1,7 +1,7 @@
 from tabnanny import verbose
 
 from deblend_sofia_detections import report_version
-
+from deblend_sofia_detections.support.logging import print_log
 from astropy.table import QTable
 from astropy.io import fits
 
@@ -12,8 +12,7 @@ import datetime
 
 from scipy.ndimage import maximum_filter
 
-def filter_peaks(maxima,npeaks=np.inf,verbose=False,
-        previous_deblend=None):
+def filter_peaks(cfg,maxima,npeaks=np.inf,previous_deblend=None):
       
 
     z_peaks = []
@@ -30,8 +29,9 @@ def filter_peaks(maxima,npeaks=np.inf,verbose=False,
                 # which is not what we want
                 # We use the mean of the previous deblend in the vicinity of the peak
                 current = previous_deblend[peaks[0],peaks[1],peaks[2]]
-                if verbose:
-                    print(f"Using previous deblend value {current} for peak {peaks}")
+               
+                print_log(cfg,f"Using previous deblend value {current} for peak {peaks}"
+                    ,case=['verbose'])
                 if current in mask_values:
                     current = 0.
             else:
@@ -74,8 +74,8 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
                num_processes=6,outdir='./',cube_header=None):
     
     shape = data.shape
-    if cfg.general.debug:
-        print(f'Data shape {shape}')
+    
+    print_log(cfg,f'Data shape {shape}',case=['debug'])
     #maskd the data if a mask is present
     if mask is not None:
         data[mask < 0.5] = float('NaN')
@@ -83,23 +83,23 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
     boxside = np.array(np.ceil(np.array(box_size) / 2.0),dtype=int)
     box = np.array([[boxside[0]-1, boxside[0]], [boxside[1]-1,boxside[1]], 
                     [boxside[2]-1,boxside[2]]],dtype=int)
-    if cfg.general.verbose:
-        print(f'doing local maxima detection with {num_processes} processes')
-        print(f'box size {box_size}, box {box}')
+   
+    print_log(cfg,f'doing local maxima detection with {num_processes} processes',case=['verbose'])
+    print_log(cfg,f'box size {box_size}, box {box}',case=['verbose'])
  
     start_time = datetime.datetime.now()
     local_maxima_coords = find_peaks_fast(data, threshold, box_size)
     finish_time = datetime.datetime.now()
-    if cfg.general.verbose:
-        print(f'We found our peaks in {finish_time - start_time}')
-        print(f'We now sort the peaks and filter them')
+    
+    print_log(cfg,f'We found our peaks in {finish_time - start_time}',case=['verbose'])
+    print_log(cfg,f'We now sort the peaks and filter them',case=['verbose'])
     # sorted is an intrinsic python funcion    
     local_maxima_coords = sorted(local_maxima_coords, key=lambda x: x[3], reverse=True)
-    peak_table = filter_peaks(local_maxima_coords, previous_deblend=previous_deblend
-        ,npeaks=npeaks,verbose=cfg.general.verbose)
-    if cfg.general.debug:
+    peak_table = filter_peaks(cfg, local_maxima_coords, previous_deblend=previous_deblend
+        ,npeaks=npeaks)
+    if cfg.logging.debug:
         #write the peak table to debug directory
-        peak_table.write(f'{outdir}/debug_products/peak_table.ecsv', overwrite=True)
+        peak_table.write(f'{cfg.logging.log_directory}/peak_table.ecsv', overwrite=True)
 
     #Make a new markers map based on the peaks
     markers3d = np.zeros(shape).astype(np.int8)
@@ -109,17 +109,19 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
         # place markers in the vicinity of the flux peaks
         # We  use mask_smooth here because it provides the correct mask previous mask number 
         # for peak, i.e. peaks are grouped with the old source detection. 
-        if cfg.general.verbose:
-            print(f"Placing markers for peak {peak['mask_values']} at {x},{y},{z} ")
+       
+        print_log(cfg,f"Placing markers for peak {peak['mask_values']} at {x},{y},{z} "
+            ,case=['verbose'])
 
         markers3d[z-box[0,0]:z+box[0,1],y-box[1,0]:y+box[1,1],
             x-box[2,0]:x+box[2,1]] = int(peak["mask_values"])
 
         # you can add some markers manually
         # (manual markers here ...)
-    if cfg.general.debug:
-        print(f"Saving peak markers to {outdir}debug_products/peak3d_markers.fits")
-        fits.writeto(f"{outdir}debug_products/peak3d_markers.fits",markers3d,
+   
+    print_log(cfg,f"Saving peak markers to {cfg.logging.log_directory}/peak3d_markers.fits",case=['debug'])
+    if cfg.logging.debug:    
+        fits.writeto(f"{cfg.logging.log_directory}/peak3d_markers.fits",markers3d,
             header=cube_header, overwrite=True)
 
     return peak_table,markers3d

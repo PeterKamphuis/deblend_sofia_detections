@@ -2,7 +2,7 @@ from deblend_sofia_detections.support.profiling import profile
 
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
-
+from deblend_sofia_detections.support.logging import print_log
 
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
@@ -78,12 +78,12 @@ def convert_pixel_values_to_original(intable, cube_file_name,original_cube):
             intable[f'z{conv_set}'][r] = new_values[2]*u.pix
     return intable
 
-def convertRADEC(RAin,DECin,invert=False, colon=False, verbose=False):
+def convertRADEC(cfg,RAin,DECin,invert=False, colon=False, verbose=False):
     if verbose:
-        print(f'''CONVERTRADEC: Starting conversion from the following input.
+        print_log(cfg,f'''CONVERTRADEC: Starting conversion from the following input.
 {'':8s}RA = {RAin}
 {'':8s}DEC = {DECin}
-''')
+''',case=['verbose'])
     RA = copy.deepcopy(RAin)
     DEC = copy.deepcopy(DECin)
     if not invert:

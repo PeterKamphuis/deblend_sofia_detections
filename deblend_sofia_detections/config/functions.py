@@ -1,5 +1,6 @@
 from deblend_sofia_detections.config.config import defaults
 from deblend_sofia_detections.support.errors import InputError
+from deblend_sofia_detections.support.logging import print_log,start_new_log
 from deblend_sofia_detections.support.system_functions import join_path,create_directory
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
 from omegaconf import OmegaConf
@@ -7,6 +8,7 @@ from omegaconf import OmegaConf
 import os
 import psutil
 import sys
+import copy
 import deblend_sofia_detections
 try:
     from importlib.resources import files as import_pack_files
@@ -77,44 +79,53 @@ configuration_file = ''')
     if cfg.directories.run_directory != os.getcwd():
         os.chdir(cfg.directories.run_directory)
     cfg = background_check(cfg)
+   
     return cfg
 
 
 def directory_check(cfg):
     dirs = ['data_directory', 'run_directory', 'ancillary_directory', 'watershed_directory']
+    
     if cfg.sofia.directory[-1] != '/':
         cfg.sofia.directory += '/'
-    # make full paths for defaults    
+    # make full paths for defaults
+    directories_to_check = [cfg.sofia.directory]
+    directories_to_create= []   
     if cfg.directories.ancillary_directory == 'ancillary_data':
         cfg.directories.ancillary_directory = join_path(cfg.directories.data_directory,
             cfg.directories.ancillary_directory)
+        directories_to_create.append(cfg.directories.ancillary_directory)
     if cfg.directories.watershed_directory == 'Watershed_Output':
         cfg.directories.watershed_directory = join_path(cfg.sofia.directory,
             cfg.directories.watershed_directory)
+        directories_to_create.append(cfg.directories.watershed_directory)
+
+    cfg.internal.input_log_directory = copy.deepcopy(cfg.logging.log_directory)
+    cfg.internal.input_log_file = copy.deepcopy(cfg.logging.log_file)    
+ 
+
+
     for attr in dirs:
         test_dir = getattr(cfg.directories, attr)
+        directories_to_check.append(test_dir)
         if test_dir[-1] != '/':
             test_dir += '/'
             setattr(cfg.directories , attr, test_dir)
     
-    for test_dir in [cfg.directories.data_directory, cfg.directories.run_directory
-        , cfg.directories.ancillary_directory, cfg.sofia.directory, cfg.directories.watershed_directory]:
+    for test_dir in directories_to_check:
         if not os.path.isdir(test_dir):
-            if test_dir in [cfg.directories.ancillary_directory, cfg.directories.watershed_directory]:
+            if test_dir in directories_to_create:
                 create_directory(test_dir)
             else:
-                raise InputError(f"The directory {test_dir} does not exist. Please provide a correct directory.")
-    
-    if cfg.general.debug:
-        create_directory('debug_products', base_directory=cfg.directories.ancillary_directory)
-    
-    if cfg.general.verbose:
-        print(f'''Checked the directories:
-            {cfg.directories.data_directory}   
-            {cfg.directories.run_directory}
-            {cfg.directories.ancillary_directory}
-            {cfg.sofia.directory}
-        ''')
+                raise InputError(f"The directory {test_dir} does not exist. Please provide a correct directory.")  
+    start_new_log(cfg,basedir=cfg.directories.watershed_directory)
+   
+    print_log(cfg, f'''Checked the directories:
+        {cfg.directories.data_directory}   
+        {cfg.directories.run_directory}
+        {cfg.directories.ancillary_directory}
+        {cfg.sofia.directory}
+    ''')
     
     return cfg
 
