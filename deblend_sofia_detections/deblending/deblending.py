@@ -62,6 +62,29 @@ def check_source_surrounded(cfg,mask):
     """Check if the source in the mask is surrounded by another source."""
     results = {}
     sources = np.unique(mask)
+    # if we have only one source we do not have to check if it is surrounded by another source
+    if len(sources)-1 <= 1:
+        return mask
+    
+    # then lets set some initial values for the sources
+    for source in sources:
+        if source == 0:
+            continue
+        # Get the mask for the source
+        source_mask = mask == source
+        results[f'{source}'] = {'id': source, 'surrounded': False, 
+            'mask': source_mask, 'total_no_pixels': np.sum(source_mask),
+            'total_border_pixels': 0, 
+            'borders': {}}
+
+    print(np.where(results['1']['mask']))
+    exit()    
+
+
+def check_source_surrounded_old(cfg,mask):
+    """Check if the source in the mask is surrounded by another source."""
+    results = {}
+    sources = np.unique(mask)
     if len(sources)-1 <= 1:
         return mask
     for source in sources:
@@ -167,12 +190,14 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
     print_log(cfg, f"Checking if any source is surrounded by another source in the {dimension}D data.",
         case=['verbose'])
     start= datetime.now()
-    if dimension == 2:
-        new_mask = check_source_surrounded(cfg, new_mask_HI)
+   
+    new_mask = check_source_surrounded(cfg, new_mask_HI)
+    '''
     else:
         new_mask = np.zeros_like(new_mask_HI)
         for i in range(new_mask_HI.shape[0]):
             new_mask[i,:,:] = check_source_surrounded(cfg, new_mask_HI[i,:,:])
+    '''
     end = datetime.now()
     print_log(cfg, f'''Finished checking if any source is surrounded by another source in the {dimension}D data.
 Time taken: {end - start}''', case=['verbose'])
