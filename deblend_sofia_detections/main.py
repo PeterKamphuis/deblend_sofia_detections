@@ -10,7 +10,7 @@
 
 from deblend_sofia_detections.config.functions import setup_config
 from deblend_sofia_detections.deblending.deblending import deblend_sofia_detections
-
+from deblend_sofia_detections.support.profiling import profile
 import sys
 import traceback
 import warnings
@@ -33,7 +33,7 @@ def main_with_input(argv):
    
     
 
-
+@profile(log_file='profiler_logs/deblend_main_with_input_cubes.log')
 def main():
     argv=sys.argv[1:]
     '''Set up the configuration as input by the user'''

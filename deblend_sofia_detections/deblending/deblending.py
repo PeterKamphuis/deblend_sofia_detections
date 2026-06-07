@@ -69,7 +69,6 @@ def check_source_surrounded(cfg,mask):
         counter += 1
         sources = np.unique(mask)
         # if we have only one source we do not have to check if it is surrounded by another source
-        print(sources)
         if counter > 3:
             print_log(cfg, f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.", case=['verbose'])
             raise RunTimeError(f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.")
@@ -390,7 +389,8 @@ def deblend_sofia_detections(cfg):
   
     if max_source_id > max_source_id_original:
         rerun_sofia(cfg)
-    close_variables(max_source_id,max_source_id_original,sources)
+    close_variables(max_source_id,max_source_id_original,sources,cfg)
+  
 
 @profile('profiler_logs/detect_optical_sources.log')
 def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
