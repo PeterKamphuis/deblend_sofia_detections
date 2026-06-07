@@ -10,7 +10,7 @@ from deblend_sofia_detections.support.system_functions import create_directory,j
 from deblend_sofia_detections.support.support_functions import match_size,\
     close_variables
 from deblend_sofia_detections.support.table_functions import read_manual_table
-from deblend_sofia_detections.support.errors import InputError
+from deblend_sofia_detections.support.errors import InputError,RunTimeError
 from astropy.convolution import convolve_fft
 from astropy.io import fits
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -61,24 +61,69 @@ def check_source_size(cfg,segments,header):
 def check_source_surrounded(cfg,mask):
     """Check if the source in the mask is surrounded by another source."""
     results = {}
-    sources = np.unique(mask)
-    # if we have only one source we do not have to check if it is surrounded by another source
-    if len(sources)-1 <= 1:
-        return mask
-    
-    # then lets set some initial values for the sources
-    for source in sources:
-        if source == 0:
-            continue
-        # Get the mask for the source
-        source_mask = mask == source
-        results[f'{source}'] = {'id': source, 'surrounded': False, 
-            'mask': source_mask, 'total_no_pixels': np.sum(source_mask),
-            'total_border_pixels': 0, 
-            'borders': {}}
-
-    print(np.where(results['1']['mask']))
-    exit()    
+    # we need to do this until we no longer merge
+    merge = True
+    counter = 0
+    while merge:
+        results = {}
+        counter += 1
+        sources = np.unique(mask)
+        # if we have only one source we do not have to check if it is surrounded by another source
+        print(sources)
+        if counter > 3:
+            print_log(cfg, f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.", case=['verbose'])
+            raise RunTimeError(f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.")
+          
+        if len(sources)-1 <= 1:
+            return mask
+        
+        # then lets set some initial values for the sources
+        for source in sources:
+            if source == 0:
+                continue
+            # Get the mask for the source
+            source_mask = mask == source
+            results[f'{source}'] = {'id': source, 'surrounded': False, 
+                'mask': source_mask, 'total_no_pixels': np.sum(source_mask),
+                'total_border_pixels': 0, 
+                'borders': {'0':0}}
+        #indices = np.where(results['1']['mask'])
+        for index in zip(*np.nonzero(mask)):
+            id = mask[index]
+            # Check the neighbours in all dimensions
+            neighbours = mask[tuple(slice(max(0, i-1), i+2) for i in index)]
+            if (neighbours == id).all():  # No neighbours
+                continue
+            results[f'{id}']['total_border_pixels'] += 1
+            if np.all((neighbours == 0) | (neighbours == id)):
+                results[f'{id}']['borders'][f'0'] += 1
+                continue  # We have a border pixel
+            for source in np.unique(neighbours):
+                if source == id:
+                    continue
+                if f'{source}' not in results[f'{id}']['borders']:
+                    results[f'{id}']['borders'][f'{source}'] = 1
+                else:
+                    results[f'{id}']['borders'][f'{source}'] += 1
+        merge = False
+        for source in results: 
+            #Get the longest border id
+            if set(results[source]['borders'].keys()) == {'0'}:
+                continue
+            long_border= max(results[source]['borders'], key=results[source]['borders'].get)
+            if long_border != '0':
+                if results[source]['borders'][long_border] > results[source]['total_border_pixels']*0.7:
+                    results[source]['surrounded'] = True
+                    # If the source is surrounded by another source we set the mask to th id
+                    
+                    print_log(cfg, f'''Source {source} is for 70% surrounded by source {long_border}. 
+border with {long_border} = {results[source]['borders'][f'{long_border}']} pixels, 
+total border = {results[source]['total_border_pixels']} pixels. 
+So we add it to it.''', case=['debug'])
+                    mask[results[source]['mask']] = int(long_border)
+                    merge = True
+    return mask
+           
 
 
 def check_source_surrounded_old(cfg,mask):
@@ -205,7 +250,7 @@ Time taken: {end - start}''', case=['verbose'])
         fits.writeto(f"{cfg.logging.log_directory}/cleaned_mask_{type_ind}_based_on_optical_markers_source_{source_id}.fits",new_mask,
                 header=data[0].header, overwrite=True)  
   
-    
+   
     print_log(cfg, f"Checking the size of the sources in the {type_ind} and removing sources that are smaller than the beam."
         , case=['verbose'])
     new_mask_HI = check_source_size(cfg,new_mask,data[0].header,)
