@@ -838,10 +838,12 @@ def watershed_deblending(cfg_in, cube_name = None,
     #outdir = f'{cfg.directories.watershed_directory}'
     sofia_id,cube_file_name = obtain_sofia_id(cfg.sofia.basename, cube_name)
     outdir = join_path(cfg.directories.watershed_directory, f'watershed_source_{sofia_id}/')
+ 
     path,name = os.path.split(cfg.internal.cleaned_optical_background)
     basename = os.path.splitext(name)[0]
     cfg.internal.cleaned_optical_background = join_path(outdir,f'{basename}_Source_{sofia_id}.fits')
     if not os.path.exists(outdir):
+        print_log(cfg, f'creating the directory {outdir} for the deblending of the cube {cube_name}', case=['verbose'])
         create_directory(outdir)  
     else:
         #if the directory already exists we need to clean it because we will 
@@ -856,7 +858,7 @@ def watershed_deblending(cfg_in, cube_name = None,
                         os.remove(file_path)
                 else:
                     os.remove(file_path)
-
+  
     start_new_log(cfg,basedir = outdir,source=sofia_id)
      
     #We have to clean all the input

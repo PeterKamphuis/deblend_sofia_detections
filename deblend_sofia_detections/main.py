@@ -27,16 +27,21 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 #This still slightly leaking in deblend_on_optical (wcs, match_size and subtract_background) 
 # but it seems to be in the packages.
 
-def main_trace():
+def main_trace_with_input(argv):
     from viztracer import VizTracer
     with VizTracer(output_file="DSD_Run_Viztracer.json",min_duration=1000) as tracer:
-        main()
+        main_with_input(argv)
 
 def main_with_input(argv):
     cfg = setup_config(argv)
     deblend_sofia_detections(cfg)
    
     
+def main_trace():
+    from viztracer import VizTracer
+    with VizTracer(output_file="DSD_Run_Viztracer.json",min_duration=1000) as tracer:
+        main()
+
 
 @profile(log_file='profiler_logs/deblend_main_with_input_cubes.log')
 def main():
