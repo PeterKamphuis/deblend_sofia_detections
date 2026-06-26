@@ -111,21 +111,36 @@ def directory_check(cfg):
         if test_dir[-1] != '/':
             test_dir += '/'
             setattr(cfg.directories , attr, test_dir)
-    
+    if cfg.input.internet_query.lower() != 'none':
+        directories_to_check.append(f'{cfg.directories.ancillary_directory}/tables/')
+        directories_to_create.append(f'{cfg.directories.ancillary_directory}/tables/')
     for test_dir in directories_to_check:
         if not os.path.isdir(test_dir):
             if test_dir in directories_to_create:
                 create_directory(test_dir)
             else:
                 raise InputError(f"The directory {test_dir} does not exist. Please provide a correct directory.")  
+    internet_caches = ['gaia','ned','simbad']
     start_new_log(cfg,basedir=cfg.directories.watershed_directory)
-   
     print_log(cfg, f'''Checked the directories:
         {cfg.directories.data_directory}   
         {cfg.directories.run_directory}
         {cfg.directories.ancillary_directory}
         {cfg.sofia.directory}
     ''')
+    for cache in internet_caches:
+        if os.path.isfile(f'{cfg.directories.ancillary_directory}/tables/cached_{cache}_table.pkl'):
+            if cfg.input.clear_internet_cache:
+                os.remove(f'{cfg.directories.ancillary_directory}/tables/cached_{cache}_table.pkl')
+            else:
+                print_log(cfg, f"Using existing cached {cache} table.", case=['verbose'])
+                setattr(cfg.internal, f'{cache}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{cache}_table.pkl')
+        else:
+            print_log(cfg, f"No cached {cache} table found.", case=['verbose'])
+            setattr(cfg.internal, f'{cache}_table', 'none')
+
+  
+    
     
     return cfg
 

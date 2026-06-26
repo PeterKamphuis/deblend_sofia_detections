@@ -1,47 +1,39 @@
 # -*- coding: future_fstrings -*-
 #Functions that look for optical image
 
+
 from deblend_sofia_detections.deblending.image_manipulation import cut_optical
 from deblend_sofia_detections.support.errors import DownloadError
 from deblend_sofia_detections.support.logging import print_log
-from astropy import units as u
+from deblend_sofia_detections.support.table_functions import check_table_length
+from deblend_sofia_detections.support.support_functions import get_ned_requested_metadata
+from astropy import time, units as u
 from astropy.io import fits
 from astroquery.skyview import SkyView
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
+from astropy.table import QTable, Column,vstack,unique
+from xml.parsers.expat import ExpatError
+
 import urllib.request
 import os
 import warnings
 import numpy as np
-
-
+import pickle
+import time
 
 def creating_full_FOV_optical(cfg):
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
    
     print_log(cfg, f'Quering the Sky Survey', case=['verbose'])
-    #First we open the moment header 0 to get the extend of the field 
     with warnings.catch_warnings():
-        warnings.simplefilter("ignore")     
+        warnings.simplefilter("ignore")
         mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
         mom0_wcs = WCS(mom0_header).celestial
-    #set the size of the image
-    size = np.nanmax([abs(mom0_header['NAXIS1']*mom0_header['CDELT1'])*60.,
-                      abs(mom0_header['NAXIS2']*mom0_header['CDELT2'])*60.,])
-    size_quantity= u.Quantity(size,u.arcmin)
-    #get_image_list seems to guess at the pixel size let's fix it to 3 arcsec 
-    beam = mom0_header['BMAJ'] * u.deg
-    optical_pixel_scale = beam.to(u.arcsec).value/cfg.general.optical_pixel_scale * u.arcsec
-    #If the resolution of our optical images is greater than 5 the deblending becomes hairy 
-    if optical_pixel_scale > 4.*u.arcsec:
-        optical_pixel_scale = 4. * u.arcsec
-    size_pixels = (size_quantity.to(u.arcsec).value/optical_pixel_scale.value).astype(int)
-    #obtain the central coordinates
-    ra,dec = mom0_wcs.wcs_pix2world(mom0_header['NAXIS1']/2., mom0_header['NAXIS2']/2.,1.)
-    obj_coords = SkyCoord(ra= ra* u.degree, dec= dec * u.degree, frame='fk5')
 
-  
+    obj_coords, size_quantity, size_pixels = get_cutout_region(cfg,
+        mom0_header=mom0_header,mom0_wcs=mom0_wcs)
     if not cfg.input.manual_optical_image[0] is None:
         
         print_log(cfg, f'Checking manual input', case=['verbose'])
@@ -60,9 +52,6 @@ def creating_full_FOV_optical(cfg):
             fits.writeto(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
 
             return
-
-
-    i
     print_log(cfg, f'''Obtaining the actual image list with the following parameters:
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
@@ -96,3 +85,243 @@ This can take a while.''', case=['verbose'])
 Check your internet connection and the SkyView service status.
 Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.
 ''')
+
+
+
+def download_gaia_table(cfg):
+    sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+    # we are only running this if the user wants dowloads
+    if cfg.internal.gaia_table.lower() == 'none':
+        from astroquery.gaia import Gaia
+        #Load the gaia table
+       
+        Gaia.MAIN_GAIA_TABLE = "gaiadr3.gaia_source"
+        #Do not set this to minus one as it can crash
+        Gaia.ROW_LIMIT = 50000
+        # we want maximum chunks of 0.5 degree
+        '''
+        number_of_chunk = int(np.ceil(size_quantity.to(u.deg).value/1.0))
+        total_requests = number_of_chunk**2
+        print_log(cfg,f"Querying Gaia for sources in the image area, this may take some time. The query will be split into {total_requests} requests to avoid timeouts."
+            ,case=['main','screen'])
+        new_size = size_quantity.to(u.deg)/number_of_chunk
+        #new_size = 0.1*u.deg
+       
+        for i in range(number_of_chunk):
+            for j in range(number_of_chunk):
+                ra_offset = ((i - number_of_chunk/2 + 0.5) * new_size)*np.cos(sky_coords.dec.to(u.rad).value)
+                dec_offset = (j - number_of_chunk/2 + 0.5) * new_size
+                print_log(cfg,f"Calcuated a ra_offset of {ra_offset} and dec_offset of {dec_offset}",case=['debug'])
+                sub_coords = SkyCoord(ra=sky_coords.ra + ra_offset, dec=sky_coords.dec + dec_offset, frame='fk5')
+                print_log(cfg,f"Querying Gaia for sources in the sub-region centered at {sub_coords.to_string('hmsdms')} with size {new_size} degrees.",case=['verbose','screen'])
+                gaia_table_sub = Gaia.query_object_async(sub_coords, width=new_size*1.5, height=new_size*1.5)
+                if i == 0 and j == 0:
+                    gaia_table = gaia_table_sub
+                else:
+                    gaia_table = vstack([gaia_table, gaia_table_sub])
+                print_log(cfg,f"Found {len(gaia_table_sub)} Gaia sources in the sub-region. (total so far: {len(gaia_table)})",
+                          case=['verbose','screen'])
+        '''            
+        gaia_table = Gaia.query_object_async(sky_coords, width=size_quantity*1.2, height=size_quantity*1.2)
+        print_log(cfg,f"Found {len(gaia_table)} Gaia sources in the image area. Sorting them"
+            ,case=['debug'])
+        #Remove galaxy canditates
+        gaia_table = gaia_table[gaia_table['in_galaxy_candidates'] == False] 
+        print_log(cfg,f"After removing galaxy candidates, {len(gaia_table)} Gaia sources remain.",case=['debug'])
+        #remove duplicates
+      
+        gaia_table = unique(gaia_table, keys=['source_id'])
+        print_log(cfg,f"After removing duplicates , {len(gaia_table)} Gaia sources remain.",case=['debug'])
+        #gaia_table = gaia_table[gaia_table['in_qso_candidates'] == False]    
+        #gaia_table = gaia_table[gaia_table['non_single_star'] == 0] 
+        gaia_table.sort('phot_rp_mean_mag')
+        if len(gaia_table) > 20000:
+            print_log(cfg,"Capping the gaia table at 20000. brightest sources",
+                case=['debug'])
+            gaia_table = gaia_table[0:20000]
+        print_log(cfg,f"Found {len(gaia_table)} Gaia sources in the image area after filtering and sorting. Saving to cache."
+            ,case=['verbose'])
+      
+        with open(f'{cfg.directories.ancillary_directory}/tables/cached_gaia_table.pkl','wb') as tmp:
+            pickle.dump(gaia_table,tmp) 
+        cfg.internal.gaia_table = f'{cfg.directories.ancillary_directory}/tables/cached_gaia_table.pkl'
+
+def download_ned_table(cfg):
+    
+    # we are only running this if the user wants dowloads
+    if cfg.internal.ned_table.lower() == 'none':
+        sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+        print_log(cfg,f"Querying NED for sources in the image area, this may take some time...",case=['screen'])  
+        from astroquery.ipac.ned import Ned
+        Ned.TIMEOUT = 3600
+        Ned.clear_cache()
+        internet_table = None
+        query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
+        for attempt in range(3):
+            try:
+                internet_table = Ned.query_region(sky_coords, radius=np.sqrt(2.*size_quantity**2), equinox='J2000.0')
+                break
+            except query_errors as e:    
+                print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
+                if attempt < 2:
+                    time.sleep(5. )
+            print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])  
+        if internet_table is None:
+            print_log(cfg, 'NED returned an invalid or temporary response; continuing without NED counterpart table.',
+                case=['verbose'])
+            return
+       
+        # as astropy is the dumbest project ever they can not be consistant so 
+        # we have to correct the units for RA and DEg
+        internet_table['RA'].unit=u.deg
+        internet_table['DEC'].unit=u.deg
+        # Astropy is so stupid that it does not provide a QTable from the query
+        # so we have to do this as well. 
+        result_table = QTable()
+        requested_columns, requested_dtypes, dummy_units = get_ned_requested_metadata()
+        for x in requested_columns:
+            if x in internet_table.colnames:
+                tmp_column= internet_table[x]
+                tmp_column[tmp_column.mask] = float('NaN')
+            
+                result_table[x] = Column(tmp_column,\
+                                    unit=internet_table[x].unit,\
+                                    dtype=requested_dtypes[requested_columns.index(x)])
+            else:
+                result_table[x] = Column([None for x in range(check_table_length(internet_table))],\
+                                    dtype=requested_dtypes[requested_columns.index(x)])
+            
+        #select out the galaxies
+        objects_to_select = ['G','GPAIR','GTRPL']
+        rows = [True if x.upper() in objects_to_select else False for x in result_table['Type']]
+        search_table = result_table[rows]
+        with open(f'{cfg.directories.ancillary_directory}/tables/cached_ned_table.pkl','wb') as tmp:
+            pickle.dump(search_table,tmp) 
+        cfg.internal.ned_table = f'{cfg.directories.ancillary_directory}/tables/cached_ned_table.pkl'   
+
+def download_simbad_table(cfg):
+    # we are only running this if the user wants dowloads
+    if cfg.internal.simbad_table.lower() == 'none':
+        sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+        print_log(cfg,f"Querying Simbad for sources in the image area, this may take some time...",case=['screen'])  
+        from astroquery.simbad import Simbad
+        Simbad.TIMEOUT = 3600
+        Simbad.clear_cache()
+        lamp = Simbad()
+        
+        lamp.add_votable_fields('main_id', 'ra', 'dec', 'rvz_radvel', 'otype_txt','morph_type', 'V')
+        internet_table = None
+        query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
+
+
+        for attempt in range(3):
+            try:
+                internet_table = lamp.query_region(sky_coords, radius=np.sqrt(2*size_quantity**2))
+                break
+            except query_errors as e:    
+                print_log(cfg, f'SIMBAD query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
+                if attempt < 2:
+                    time.sleep(5.)
+        print_log(cfg, f'SIMBAD query completed with originally {check_table_length(internet_table)} results', case=['screen'])  
+        if internet_table is None:
+            print_log(cfg, 'SIMBAD returned an invalid or temporary response; continuing without a SIMBAD counterpart.',
+                case=['verbose'])
+            return
+        
+        # as astropy is the dumbest project ever they can not be consistant so 
+        # we have to correct the units for RA and DEg
+        internet_table['ra'].unit=u.deg
+        internet_table['dec'].unit=u.deg
+        # Astropy is so stupid that it does not provide a QTable from the query
+        # so we have to do this as well. 
+        result_table = QTable()
+        translation_table = get_SIMBAD_translation_table()
+        requested_columns, requested_dtypes, dummy_units = get_ned_requested_metadata()
+  
+        for x in requested_columns:
+            
+            if translation_table[x] in internet_table.colnames:
+                tmp_column= internet_table[translation_table[x]]
+                tmp_column[tmp_column.mask] = float('NaN')
+                result_table[x] = Column(tmp_column,\
+                                    unit=internet_table[translation_table[x]].unit,
+                                    dtype=requested_dtypes[requested_columns.index(x)])
+            
+            else:
+                result_table[x] = Column([None for x in range(check_table_length(internet_table))],\
+                                    dtype=requested_dtypes[requested_columns.index(x)])
+        #select out the galaxies
+        objects_to_select_with_v = ['Sy1','BLL','LSB','Bla','BiC','SyG','rG', 'bCG', 'Sy2',
+            'SBG', 'LIN', 'QSO', 'H2G', 'EmG', 'AGN', 'G', 'GiP','GiG','GiC','CGG',
+            'IG','PaG','GrG','ClG','SCG']
+        objects_to_select = ['LSB','BiC','SyG','rG', 'bCG',
+            'SBG',  'EmG', 'G', 'GiP','GiG','GiC','CGG',
+            'IG','PaG','GrG','SCG']
+        objects_to_select = [x.upper() for x in objects_to_select]
+        objects_to_select_with_v = [x.upper() for x in objects_to_select_with_v]
+        rows=[]
+        for x,v in zip(result_table['Type'], result_table['Velocity']):
+            if x.upper() in objects_to_select_with_v and not np.isnan(v):
+                rows.append(True)
+            elif x.upper() in objects_to_select:
+                rows.append(True)
+            else:
+                rows.append(False)
+
+        search_table = result_table[rows]
+        with open(f'{cfg.directories.ancillary_directory}/tables/cached_simbad_table.pkl','wb') as tmp:
+            pickle.dump(search_table,tmp) 
+        cfg.internal.simbad_table = f'{cfg.directories.ancillary_directory}/tables/cached_simbad_table.pkl'
+
+def get_cutout_region(cfg,mom0_header=None,mom0_wcs=None):
+      #First we open the moment header 0 to get the extend of the field 
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")     
+        if mom0_header is None:
+            mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
+        if mom0_wcs is None:
+            mom0_wcs = WCS(mom0_header).celestial
+    #set the size of the image
+    size = np.nanmax([abs(mom0_header['NAXIS1']*mom0_header['CDELT1'])*60.,
+                      abs(mom0_header['NAXIS2']*mom0_header['CDELT2'])*60.,])
+    size_quantity= u.Quantity(size,u.arcmin)
+    #get_image_list seems to guess at the pixel size let's fix it to 3 arcsec 
+    beam = mom0_header['BMAJ'] * u.deg
+    optical_pixel_scale = beam.to(u.arcsec).value/cfg.general.optical_pixel_scale * u.arcsec
+    #If the resolution of our optical images is greater than 5 the deblending becomes hairy 
+    if optical_pixel_scale > 4.*u.arcsec:
+        optical_pixel_scale = 4. * u.arcsec
+    size_pixels = (size_quantity.to(u.arcsec).value/optical_pixel_scale.value).astype(int)
+    #obtain the central coordinates
+    ra,dec = mom0_wcs.wcs_pix2world(mom0_header['NAXIS1']/2., mom0_header['NAXIS2']/2.,1.)
+    obj_coords = SkyCoord(ra= ra* u.degree, dec= dec * u.degree, frame='fk5')
+    return obj_coords, size_quantity, size_pixels
+
+
+   
+def get_SIMBAD_translation_table():
+    translation_table = {}
+    translation_table['Object Name'] = 'main_id'
+    translation_table['RA'] = 'ra'
+    translation_table['DEC'] = 'dec'
+    translation_table['Velocity'] = 'rvz_radvel'
+    translation_table['Type'] = 'otype_txt'
+    translation_table['Magnitude and Filter'] = 'V'
+    translation_table['morph_type'] = 'morph_type'
+    translation_table['Distance'] = 'Distance'
+    return translation_table
+
+
+
+def make_empty_ned_search_table(include_extra=True):
+    requested_columns, requested_dtypes, requested_units = \
+        get_ned_requested_metadata(include_extra=include_extra)
+
+    table = QTable(names=requested_columns, dtype=requested_dtypes,
+        units=requested_units)
+    to_add = ['No object Found', np.nan, np.nan, np.nan,
+        'Unknown', None, np.nan]
+    if include_extra:
+        to_add += [np.nan, np.nan, np.nan]
+    table.add_row(to_add)
+    return table

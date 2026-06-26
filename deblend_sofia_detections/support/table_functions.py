@@ -145,6 +145,40 @@ def copy_table_header(input_table):
    
     return copied_table
 
+def identify_object_names(cfg,table):
+    """
+    Identify the object name column in a table based on common keywords.
+    
+    Parameters:
+    - table: Astropy Table containing the data.
+    
+    Returns:
+    - Updated table with the identified object name column.
+    """
+    clear_name_columns = ['name', 'galaxy', 'object', 'NGC', 'IC', 'UGC',
+                           'PGC', 'ESO', '2MASX', 'SDSS', 'WISEA']
+    check_name_columns = ['id', 'identifier']
+    found = False
+    for col in table.colnames:
+        if col.lower() in clear_name_columns:
+            table['Object Name'] = table[col].copy()
+            found = True
+            break 
+    if not found:
+        for col in table.colnames:
+            if col.lower() in check_name_columns:
+                if isinstance(table[col][0], str):
+                    try:
+                        tmp =float(table[col][0])
+                    except ValueError:               
+                        table['Object Name'] = table[col].copy()
+                        found = True
+                        break    
+       
+    if found:   
+        return table
+    else:
+        raise TableError('No object name column found in the table.')
 
 def identify_velocity_column(cfg,table):
     """
@@ -228,6 +262,8 @@ def read_manual_table(cfg, need_velocity =True):
     if 'velocity' not in [x.lower() for x in manual_table.colnames]\
         and need_velocity:
         manual_table = identify_velocity_column(cfg,manual_table) 
+    if 'object name' not in [x.lower() for x in manual_table.colnames]:
+        manual_table= identify_object_names(cfg,manual_table)
     return manual_table
 
 

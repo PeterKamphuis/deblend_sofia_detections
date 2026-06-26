@@ -13,7 +13,7 @@ except ImportError:
     from importlib_resources import open_text as pack_open_txt
 
 from astropy.table import QTable
-from astropy.io import votable
+from astropy.io import votable,fits
 from astropy import units as u
 
 import os
@@ -97,6 +97,36 @@ check_parameters.__doc__ =f'''
 '''
 '''Run the modified sofia file on the cube'''
 
+def closest_sofia_source(cfg,source_id,sources,header_info=None):
+    """Find the closest sofia source to the given source_id in the sources table."""
+    prefix= ''
+    for col in sources.colnames:
+        if 'sofia_' in col.lower():
+            prefix = 'sofia_'
+            break
+    ids = [x for x in sources[prefix+'id']]  
+    weights = [header_info['pixelsize'].to(u.deg).value,
+            header_info['channel_width'].to(u.km/u.s).value] if\
+        header_info else [1., 1.]
+    source_row = sources[ids.index(source_id)]
+    source_coords = (source_row[f'{prefix}ra'], source_row[f'{prefix}dec'],source_row[f'{prefix}v_sofia'])
+    min_distance = float('inf')
+    closest_source_id = None
+
+    for row in sources:
+        if row[f'{prefix}id'] != source_id:
+            row_coords = (row[f'{prefix}ra'], row[f'{prefix}dec'], row[f'{prefix}v_sofia'])
+            distance = np.sqrt(((source_coords[0].to(u.deg).value - row_coords[0].to(u.deg).value)/weights[0])**2 
+                + ((source_coords[1].to(u.deg).value - row_coords[1].to(u.deg).value)/weights[0])**2 
+                + ((source_coords[2].to(u.km/u.s).value - row_coords[2].to(u.km/u.s).value)/weights[1])**2)
+            if distance < min_distance:
+                min_distance = distance
+                closest_source_id = row[f'{prefix}id']
+
+    return closest_source_id
+
+
+
 def execute_sofia(cfg,run_directory='Sofia_Output',
         sofia_parameter_file='sofia_input.par'):
     indir = os.getcwd()
@@ -119,8 +149,12 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
             file.writelines(sofia_warnings_are_annoying.decode("utf-8"))
         os.chdir(indir)    
         raise SofiaError(f'Sofia run failed with return code {sfrun.returncode}. Check sofia_output.txt for details.')
-     
- 
+    else:
+        if cfg.logging.enable_log and cfg.logging.debug:
+            with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
+                file.writelines(sofia_run.decode("utf-8"))
+           
+       
     #Convert the ps files
     all_files_and_directories = os.listdir(f'{run_directory}')
     for file in all_files_and_directories:
@@ -139,7 +173,8 @@ def load_sofia_basename(filename):
     return os.path.basename(os.path.splitext(input_file['input.data'])[0])
 
 def load_sofia_catalogue(cfg,filename, variables = None,no_conversion=False):
-    '''Read a specified sofia table into a Astropy QTable'''     
+    '''Read a specified sofia table into a Astropy QTable'''   
+    print_log(cfg,f'Reading the sofia catalogue {filename}. \n',case=['debug','screen'] )  
     if filename.endswith('.xml'): 
         sources = read_sofia_xml(cfg,filename)
     else:
@@ -307,7 +342,7 @@ def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=
         sofia_basename = cfg.sofia.basename   
     
     full_base = f'{sofia_directory}{sofia_basename}'
-
+    print(f'Looking for sofia catalogue in {full_base}_cat.xml or {full_base}_cat.txt')
     if os.path.isfile(f'{full_base}_cat.xml') and not force_text:
         #If we have an xml we prefer to read that
         table_name = f'{full_base}_cat.xml'
@@ -354,11 +389,10 @@ def read_sofia_xml(cfg,filename):
             table.rename_column('str_id',actual_colnames[lower_colnames.index('id')])
     for col in actual_colnames:
         if isinstance(table[col].unit,(u.UnrecognizedUnit)):
-            test = translate_string_to_unit(table[col].unit.to_string())
+            test = translate_string_to_unit(table[col].unit.to_string())    
             table['tmp'] = [x.value for x in table[col]]* test 
             table.remove_column(col)
             table.rename_column('tmp',col)
-          
     print_log(cfg,f'We found the following columns in the sofia catalogue: {actual_colnames}'
         ,case=['debug'])
     return table
@@ -412,7 +446,27 @@ def rerun_sofia(cfg):
     write_sofia(sofia_temp,f'{cfg.sofia.parameter_path}/deblend_sofia.par')
     execute_sofia(cfg,run_directory=cfg.sofia.parameter_path,
         sofia_parameter_file='deblend_sofia.par')
-
+    #mark the new cubelets as deblended
+    mark_as_deblended(cfg)
+    
+def mark_as_deblended(cfg,sofia_directory=None,sofia_basename=None):
+    if sofia_directory is None:
+        sofia_directory = cfg.sofia.directory
+    if sofia_basename is None:
+        sofia_basename = cfg.sofia.basename   
+    full_base = f'{sofia_directory}/{sofia_basename}_cubelets/{sofia_basename}'
+    file = os.listdir(f'{sofia_directory}/{sofia_basename}_cubelets/')
+    files_to_mark = []
+    for f in file:
+        if f.endswith('_cube.fits'):
+            files_to_mark.append(f)
+    for f in files_to_mark:
+        print_log(cfg,f'Marking {f} as deblended',case=['verbose'])
+        cube_name = f'{sofia_directory}/{sofia_basename}_cubelets/{f}'
+        with fits.open(cube_name, mode='update') as file:
+            file[0].header['SOF_DEB'] = True
+            
+  
 def set_sofia(sofia_temp, cube_name, mask, outdir):
     """
     Set the SoFiA parameters for the deblending process.

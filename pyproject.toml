@@ -38,6 +38,7 @@ Homepage = "https://github.com/PeterKamphuis/deblend_sofia_detections"
 
 [project.scripts]
 deblend = "deblend_sofia_detections.main:main"
+time_deblend = "deblend_sofia_detections.main:main_trace"
 
 [tool.hatch.version]
 path = "version.py"

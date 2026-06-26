@@ -1,333 +1,84 @@
+
+
 from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
-    isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables
+    isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
+    get_channel_width,get_ned_requested_metadata
 from deblend_sofia_detections.support.logging import print_log
-from astropy.coordinates import SkyCoord
+
 from astropy.io import fits
-from astropy.table import QTable, Column,Table,vstack
-
-
-from xml.parsers.expat import ExpatError
-
+from astropy.table import QTable,Table,vstack
+from datetime import datetime
 import astropy.units as u
 import copy
 import numpy as np
-import time
 import warnings
 
+import pickle
 
-def get_ned_requested_metadata(include_extra=False):
-    requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
-        'Magnitude and Filter', 'Distance']
-    requested_dtypes = ['U30', float, float, float, object, object, float]
-    requested_units = [None, u.deg, u.deg, u.km/u.s, None, None, u.Mpc]
-
-    if include_extra:
-        requested_columns += ['Spatial Diff', 'Velocity Diff', 'Combined Diff']
-        requested_dtypes += [float, float, float]
-        requested_units += [u.deg, u.km/u.s, u.dimensionless_unscaled]
-
-    return requested_columns, requested_dtypes, requested_units
-
-
-def make_empty_ned_search_table(include_extra=True):
-    requested_columns, requested_dtypes, requested_units = \
-        get_ned_requested_metadata(include_extra=include_extra)
-
-    table = QTable(names=requested_columns, dtype=requested_dtypes,
-        units=requested_units)
-    to_add = ['No object Found', np.nan, np.nan, np.nan,
-        'Unknown', None, np.nan]
-    if include_extra:
-        to_add += [np.nan, np.nan, np.nan]
-    table.add_row(to_add)
-    return table
-
-def find_internet_counterpart(cfg,source,header_info, sysrange = None,\
-        wide_search = False, query = 'ALL'):
-    if query.upper() == 'NONE':
-        print_log(cfg,'The user does not want to query the internet.',case=['verbose'])
-        return make_empty_ned_search_table(), False
-
-    requested_columns, requested_dtypes, dummy_units = get_ned_requested_metadata()
-    coordinates = [source['ra'].unmasked,source['dec'].unmasked]
-   
-    co = SkyCoord(ra=coordinates[0], dec=coordinates[1], frame='fk5')
-
-    # Setup a search table in ned
-    vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region,wide_search=wide_search)
+def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED'):
     
-    print_log(cfg, f'''Querying {query} for source {source["name"]} with id {source["id"]}.\n \
-Search radius = {radius.to(u.arcmin)}  around {", ".join(convertRADEC(cfg,*[x.value for x in coordinates[:2]]))}''', 
-case=['verbose'])
-    
-    if query.upper() in ['NED','ALL']:
-        search_table_ned = find_NED_counterpart(cfg,source,co,radius, 
-                                requested_columns, requested_dtypes)
+    if table_source.upper() == 'NED':
+        if cfg.internal.ned_table == 'none':
+            print_log(cfg, f'No cached NED table found. Please run the download_catalogue function first.', case=['verbose'])
+            return QTable()
+        with open(f'{cfg.internal.ned_table}', 'rb') as tmp:
+            search_table = pickle.load(tmp)
+    elif table_source.upper() == 'SIMBAD':
+        if cfg.internal.simbad_table == 'none':
+            print_log(cfg, f'No cached SIMBAD table found. Please run the download_catalogue function first.', case=['verbose'])
+            return QTable()
+        with open(f'{cfg.internal.simbad_table}', 'rb') as tmp:
+            search_table = pickle.load(tmp)
+    elif table_source.upper() == 'MANUAL':
+        if cfg.input.manual_input_tables[0] is None:
+            return  QTable()
+        search_table = read_manual_table(cfg)
     else:
-        search_table_ned = make_empty_ned_search_table(include_extra=False)
-
-    if query.upper() in ['SIMBAD','ALL'] :
-        search_table_simbad = find_SIMBAD_counterpart(cfg,source,co,radius, 
-            requested_columns, requested_dtypes)
-    else:
-        search_table_simbad = make_empty_ned_search_table(include_extra=False)
-    if check_table_length(search_table_ned) > 0 and check_table_length(search_table_simbad) > 0:
-        for col in search_table_ned.colnames:
-            print(col)
-            print_log(cfg,f'for the column {col} we have {search_table_ned[col].dtype} in ned and {search_table_simbad[col].dtype} in simbad',
-                      case=['debug'])
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")        
-            search_table = vstack([search_table_ned, search_table_simbad])  
-    elif check_table_length(search_table_ned) > 0:
-        search_table = search_table_ned  
-    elif check_table_length(search_table_simbad) > 0:
-        search_table = search_table_simbad
-    else:
-        search_table = make_empty_ned_search_table()
-    success = True    
-    # if we have set a range of velocities we mask all that that are outside the range
-    if not sysrange is None:
-        rows =  [True if vsys-sysrange < x < vsys+sysrange else False for x in search_table['Velocity']]
-        tmp_table = search_table[rows]
-        if check_table_length(tmp_table) == 0:
-             print_log(cfg,f'We found no match within the velocity range of {sysrange}, picking the closest object without velocity',
-             case=['verbose'])
-             search_table['Velocity'] = [float('NaN') if x is None else x for x in search_table['Velocity']]
-             success = False
-        else:
-            search_table = tmp_table
-    else:
-        # if we do not have a velocity range we have to make sure that we take the None as float
-        search_table['Velocity'] = [float('NaN') if x is None else x for x in search_table['Velocity']]
-       
-    if check_table_length(search_table) > 0:
-        if not isquantity(search_table['Velocity']):
-            search_table['Velocity'].unit = u.km/u.s
-        else:
-            if search_table['Velocity'].unit != u.km/u.s:
-                try:
-                    search_table['Velocity'] = [x.to(u.km/u.s).value for x in search_table['Velocity']]
-                    search_table['Velocity'].unit = u.km/u.s
-                except:
-                    raise InputError(f'the NED counterpart for {source["Name"]} has a weird velocity unit {search_table["Velocity"].unit}')
-   
-    # first sort on distance, we always do this cause else we do not get the Spatial and combined columns
-    #distance to the source not actual distance of the object
-    search_table = sort_on_distance(cfg,search_table, coordinates,vsys)
-    if len(search_table) > 1:
-        # then pick NGC/UGC/ESO/M matches
-        search_table = sort_by_name(search_table)
-
-    if check_table_length(search_table) > 0:
-        name = search_table['Object Name'][0]
-        if ':' in name:
-            search_table['Object Name'][0] = name.split(':')[0]
-    if search_table['Velocity Diff'].unit != u.km/u.s:
-        print_log(cfg,f'Velocity Diff unit is {search_table["Velocity Diff"].unit}')
-   
-    return search_table,success
-    
-
-def find_NED_counterpart(cfg,source,co,radius, requested_columns, requested_dtypes):
-    '''
-def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
-        weights = [1.,1.,1.],wide_search = False ):
-    
-    requested_columns, dummy_dtypes, dummy_units = get_ned_requested_metadata()
-    coordinates = [source['ra'].unmasked,source['dec'].unmasked]
-   
-    co = SkyCoord(ra=coordinates[0], dec=coordinates[1], frame='fk5')
-
-    # Setup a search table in ned
-    vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region,wide_search=wide_search)
-    
-    print_log(cfg, f''Querying NED \
-Search a radius {radius.to(u.arcmin)} around {", ".join(convertRADEC(cfg,*[x.value for x in coordinates[:2]]))}'', 
-case=['verbose','screen'])
-    # get the NED table
-    # as astro query is highly unstable only import when we need it
-    '''
-    from astroquery.ipac.ned import Ned
-    Ned.TIMEOUT = 3600
-    Ned.clear_cache()
-    internet_table = None
-    query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
-
-
-    for attempt in range(3):
-        try:
-            internet_table = Ned.query_region(co, radius=radius, equinox='J2000.0')
+        raise InputError(f'Unknown table source {table_source}. Please use NED, SIMBAD or MANUAL.')
+    prefix = ''
+    for col in source.colnames:
+        if col.split('_')[0] == 'sofia':
+            prefix = 'sofia_'
             break
-        except query_errors as e:    
-            print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
-            if attempt < 2:
-                time.sleep(5 * (attempt + 1))
-    print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])  
-    if internet_table is None:
-        print_log(cfg, 'NED returned an invalid or temporary response; continuing without a NED counterpart.',
-            case=['verbose'])
-        return make_empty_ned_search_table()
-    
-    # as astropy is the dumbest project ever they can not be consistant so 
-    # we have to correct the units for RA and DEg
-    internet_table['RA'].unit=u.deg
-    internet_table['DEC'].unit=u.deg
-    # Astropy is so stupid that it does not provide a QTable from the query
-    # so we have to do this as well. 
-    result_table = QTable()
-    
-    for x in requested_columns:
-        if x in internet_table.colnames:
-            tmp_column= internet_table[x]
-            tmp_column[tmp_column.mask] = float('NaN')
-           
-            result_table[x] = Column(tmp_column,\
-                                unit=internet_table[x].unit,\
-                                dtype=requested_dtypes[requested_columns.index(x)])
-        else:
-            result_table[x] = Column([None for x in range(check_table_length(internet_table))],\
-                                dtype=requested_dtypes[requested_columns.index(x)])
-           
-    #select out the galaxies
-    objects_to_select = ['G','GPAIR','GTRPL']
-    rows = [True if x.upper() in objects_to_select else False for x in result_table['Type']]
-    search_table = result_table[rows]
-    return search_table
-    '''
-    # if we have set a range of velocities we mask all that that are outside the range
-    if not sysrange is None:
-        rows =  [True if vsys-sysrange < x < vsys+sysrange else False for x in search_table['Velocity']]
-        search_table = search_table[rows]
-    else:
-        # if we do not have a velocity range we have to make sure that we take the None as float
-        search_table['Velocity'] = [float('NaN') if x is None else x for x in search_table['Velocity']]
-       
-    if check_table_length(search_table) > 0:
-        if not isquantity(search_table['Velocity']):
-            search_table['Velocity'].unit = u.km/u.s
-        else:
-            if search_table['Velocity'].unit != u.km/u.s:
-                try:
-                    search_table['Velocity'] = [x.to(u.km/u.s).value for x in search_table['Velocity']]
-                    search_table['Velocity'].unit = u.km/u.s
-                except:
-                    raise InputError(f'the NED counterpart for {source["Name"]} has a weird unit {search_table["Velocity"].unit}')
-   
-    # first sort on distance, we always do this cause else we do not get the Spatial and combined columns
-    search_table = sort_on_distance(cfg,search_table, coordinates,vsys)
-    if len(search_table) > 1:
-        # then pick NGC/UGC/ESO/M matches
-        search_table = sort_by_name(search_table)
-
-    if check_table_length(search_table) > 0:
-        name = search_table['Object Name'][0]
-        if ':' in name:
-            search_table['Object Name'][0] = name.split(':')[0]
-    if search_table['Velocity Diff'].unit != u.km/u.s:
-        print_log(cfg,f'Velocity Diff unit is {search_table["Velocity Diff"].unit}')
-   
-    return search_table
-    '''
-
-def find_SIMBAD_counterpart(cfg,source,co,radius, requested_columns,requested_dtypes):
-    from astroquery.simbad import Simbad
-    Simbad.TIMEOUT = 3600
-    Simbad.clear_cache()
-    lamp = Simbad()
-     
-    lamp.add_votable_fields('main_id', 'ra', 'dec', 'rvz_radvel', 'otype_txt','morph_type', 'V')
-    internet_table = None
-    query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
-
-
-    for attempt in range(3):
-        try:
-            internet_table = lamp.query_region(co, radius=radius)
-            break
-        except query_errors as e:    
-            print_log(cfg, f'SIMBAD query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
-            if attempt < 2:
-                time.sleep(5 * (attempt + 1))
-    print_log(cfg, f'SIMBAD query completed with originally {check_table_length(internet_table)} results', case=['screen'])  
-    if internet_table is None:
-        print_log(cfg, 'SIMBAD returned an invalid or temporary response; continuing without a SIMBAD counterpart.',
-            case=['verbose'])
-        return make_empty_ned_search_table()
-    
-    # as astropy is the dumbest project ever they can not be consistant so 
-    # we have to correct the units for RA and DEg
-    internet_table['ra'].unit=u.deg
-    internet_table['dec'].unit=u.deg
-    # Astropy is so stupid that it does not provide a QTable from the query
-    # so we have to do this as well. 
-    result_table = QTable()
-    translation_table = get_SIMBAD_translation_table()
-    for x in requested_columns:
-        
-        if translation_table[x] in internet_table.colnames:
-            tmp_column= internet_table[translation_table[x]]
-            tmp_column[tmp_column.mask] = float('NaN')
-            result_table[x] = Column(tmp_column,\
-                                unit=internet_table[translation_table[x]].unit,
-                                dtype=requested_dtypes[requested_columns.index(x)])
-          
-        else:
-            result_table[x] = Column([None for x in range(check_table_length(internet_table))],\
-                                dtype=requested_dtypes[requested_columns.index(x)])
-    #select out the galaxies
-    objects_to_select = ['Sy1','BLL','LSB','Bla','BiC','SyG','rG', 'bCG', 'Sy2',
-         'SBG', 'LIN', 'QSO', 'H2G', 'EmG', 'AGN', 'G', 'GiP','GiG','GiC','CGG',
-         'IG','PaG','GrG','ClG','SCG']
-    objects_to_select = [x.upper() for x in objects_to_select]
-    rows = [True if x.upper() in objects_to_select else False for x in result_table['Type']]
-    search_table = result_table[rows]
-    print_log(cfg, f'SIMBAD final query completed with {check_table_length(search_table)} galaxies', case=['screen'])  
-    return search_table
-
-
-
-def find_manual_counterpart(cfg,source,header_info, sysrange=None):
-    if cfg.input.manual_input_tables[0] is None:
-        return  QTable()
-    manual_table = read_manual_table(cfg)
-
-    coordinates = [source['sofia_ra'],source['sofia_dec']]
-    
+            
+    coordinates = [source[f'{prefix}ra'],source[f'{prefix}dec']]
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
         counterpart_region=cfg.general.counterpart_region)
   
-    search_table = sort_on_distance(cfg,manual_table, coordinates,vsys)
-   
-    print_log(cfg,f'''Searching for manual counterpart for {source["sofia_id"]}
-Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(cfg,coordinates[0].value,coordinates[1].value))}
-The nearest target is {search_table["Name"]} at a distance of {search_table["Spatial Diff"].to(u.arcsec)}
-And the velocity difference is {search_table["Velocity Diff"].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}''')
-   
+    search_table = sort_on_distance(cfg,search_table, coordinates,vsys,header_info=header_info)
   
-    # if we have set a range of velocities we mask all that that are outside the range
-    if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
+    print_log(cfg,f'''Searching for manual counterpart for {source[f'{prefix}id']}
+Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(cfg,coordinates[0].value,coordinates[1].value))}
+The nearest target is {search_table['Object Name'][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}
+And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}''',
+        case=['verbose','screen'])
+    #the closest 200 source should suffice
+    search_table = search_table[0:200]
+    #let's mask all that are outside the range if we have set a range of velocities
+ 
+    for s_diff,v_diff in zip(search_table['Spatial Diff'],search_table['Velocity Diff']):
+        if np.isnan(v_diff):
+            continue
+        if s_diff > 2.*radius.to(u.arcsec) or v_diff > sysrange:
+            search_table.remove_row(np.where(search_table['Spatial Diff'] == s_diff)[0][0]) 
+   
+    # if all are outside the range we return an empty table
+    if check_table_length(search_table) == 0: 
+       search_table = QTable()
+    elif np.isnan(search_table['Velocity Diff'][0]):
+        if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec):
+            search_table = QTable() 
+    elif search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
        search_table['Velocity Diff'][0] > sysrange:
        search_table = QTable()
    
     return search_table
-   
-def get_SIMBAD_translation_table():
-    translation_table = {}
-    translation_table['Object Name'] = 'main_id'
-    translation_table['RA'] = 'ra'
-    translation_table['DEC'] = 'dec'
-    translation_table['Velocity'] = 'rvz_radvel'
-    translation_table['Type'] = 'otype_txt'
-    translation_table['Magnitude and Filter'] = 'V'
-    translation_table['morph_type'] = 'morph_type'
-    translation_table['Distance'] = 'Distance'
-    return translation_table
+
+
+
 
 
 def search_counter_part(cfg,source,sofia_directory= './',
@@ -347,13 +98,13 @@ def search_counter_part(cfg,source,sofia_directory= './',
     cube = fits.open(f'{input_dir}/{basename}_{inid}_cube.fits',\
         output_verify='warn')
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
-                  'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),\
-                                              abs(cube[0].header['CDELT1'])]))\
-                                              *u.deg\
-                                                 }
+                'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),
+                    abs(cube[0].header['CDELT2'])]))*u.deg,
+                'channel_width': get_channel_width(cube[0].header) 
+                }
    
     # first try a spectroscopic match
-    if query.upper() == 'INTERNET':
+    if query.upper() in ['INTERNET','SIMBAD','NED']:
       
         #spectroscopic_table = find_NED_counterpart(cfg,source, header_info,\
         #    sysrange=150.*u.km/u.s,wide_search=wide_search)
@@ -361,51 +112,53 @@ def search_counter_part(cfg,source,sofia_directory= './',
         #if ('Object Name' in spectroscopic_table.colnames and
         #    spectroscopic_table['Object Name'][0] == 'No object Found'):
             # something went wrong with the NED query, so lets try cDS
-        spectroscopic_table,success = find_internet_counterpart(cfg,source, header_info,\
-                sysrange=150.*u.km/u.s,wide_search=wide_search, query=cfg.input.internet_query)
-    
+        if query.upper() in ['INTERNET','NED']:
+            spectroscopic_table_ned = find_counterpart(cfg,source, header_info,
+                sysrange=150.*u.km/u.s, table_source='NED')  
+        if query.upper() in ['INTERNET','SIMBAD']:
+            spectroscopic_table_simbad = find_counterpart(cfg,source, header_info,
+                sysrange=150.*u.km/u.s, table_source='SIMBAD')
+        if check_table_length(spectroscopic_table_ned) > 0 and check_table_length(spectroscopic_table_simbad) > 0:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                spectroscopic_table = vstack([spectroscopic_table_ned, spectroscopic_table_simbad])
+            vsys, radius = set_search_radius(cfg,source,header_info,150.*u.km/u.s,
+                counterpart_region=cfg.general.counterpart_region)
+            coord = [source[f'ra'],source[f'dec']]
+            spectroscopic_table = sort_on_distance(cfg,spectroscopic_table, 
+                coord,vsys,header_info=header_info)
+        elif check_table_length(spectroscopic_table_ned) > 0:
+            spectroscopic_table = spectroscopic_table_ned
+        elif check_table_length(spectroscopic_table_simbad) > 0:
+            spectroscopic_table = spectroscopic_table_simbad
+        else:
+            spectroscopic_table = QTable()    
+
+
         search_id = 'INTERNET'
         pref =''
     elif query.upper() == 'MANUAL':
-        spectroscopic_table = find_manual_counterpart(cfg,source, header_info,
-            sysrange=150.*u.km/u.s)  
+        spectroscopic_table = find_counterpart(cfg,source, header_info,
+            sysrange=150.*u.km/u.s,table_source='MANUAL')  
         search_id = 'Manual'
         pref = 'sofia_'
-    confirmed = True
+  
    
     if check_table_length(spectroscopic_table) > 0:
-        new_table = spectroscopic_table
-    else:
-       
-        print_log(cfg,f'We found no match within the velocity range, picking the closest object without velocity',
-            case=['verbose'])
-        if query.upper() == 'INTERNET':
-            if not success:
-                possible_table = spectroscopic_table
-            else:
-                possible_table,success = find_internet_counterpart(cfg,source, 
-                    header_info, query=cfg.input.internet_query)
-        if query.upper() == 'MANUAL':
-            possible_table = QTable()
-        new_table = possible_table
-        confirmed = False
-        close_variables(possible_table)
-    #We don't need the searching rows
-    #false_table = True
-    #if query.upper() == 'NED':
-    #    false_table = False
-    if check_table_length(new_table) > 0:
-        new_table=new_table[0:1]
+        new_table = spectroscopic_table[0:1]
         final_row = combine_tables(new_table,source,column_indicators=[search_id,insource])
-        final_row[f'{search_id}_spectroscopic'] = confirmed
+        if np.isnan(new_table['Velocity Diff'][0]):
+            final_row[f'{search_id}_spectroscopic'] = False
+        else:
+            final_row[f'{search_id}_spectroscopic'] = True
     else:
        
         print_log(cfg,f'We found no {search_id} counterpart for {source[pref+"id"]}', 
             case=['verbose'])
-        if query.upper() == 'INTERNET':
-            requested_columns, requested_dtypes, requested_units = \
+        #if query.upper() == 'INTERNET':
+        requested_columns, requested_dtypes, requested_units = \
                 get_ned_requested_metadata(include_extra=True)
-        elif query.upper() == 'MANUAL':
+        if query.upper() == 'MANUAL':
             manual_table = read_manual_table(cfg,need_velocity=False)
             # Add the difference columns 
             add_units = [u.km/u.s,u.deg, u.km/u.s, u.dimensionless_unscaled]
@@ -431,7 +184,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')
-    close_variables(spectroscopic_table, new_table)
+    close_variables(spectroscopic_table)
     return final_row
 
 
@@ -517,39 +270,65 @@ def sort_by_name(table):
     return new_table            
 
 '''Sort the table by distance'''
-def sort_on_distance(cfg, table_in, coordinates, vsys, weights = [1.,1.]):
+def sort_on_distance(cfg, table_in, coordinates, vsys, header_info = None, weights = [1.,1.]):
     # this stupid table is not ordered so get names, types ra and dec and sort on distance
+    only_sort =False
     for x in table_in.colnames:
-        if x.lower() in ['spatial_diff','velocity_diff', 'combined_diff']:
-            raise InputError(f'Column {x} is not allowed in the table, please rename it')     
-    
-    print_log(cfg,f'Before sorting: {table_in}',case=['verbose'])
-    print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])
-    table = copy.deepcopy(table_in)
-    table['Spatial Diff'] = [calculate_projected_distance([x,\
-        y],coordinates,no_PA = True).value for x,y in zip(\
-        table['RA'],table['DEC'])]* u.deg
-    if not vsys is None:
-        velocities = table['Velocity'].to(u.km/u.s)
-        if isquantity(velocities):
-            velocities = velocities.value
-        if isquantity(vsys):
-            vsys = vsys.to(u.km/u.s).value
-        table['Velocity Diff'] = [float(abs(vsys-z)/weights[1])\
-            for z in velocities] * u.km/u.s
-        table['Combined Diff']= [float(np.sqrt(x.value**2+y.to(u.arcsec).value**2)) for x,y in\
-            zip(table['Velocity Diff'],table['Spatial Diff'])] * u.dimensionless_unscaled
-             
-        table.sort('Combined Diff')
+        if x in ['Spatial Diff']:
+            if vsys is None:
+                only_sort = True
+        elif x in ['Combined Diff']:
+            if vsys is not None and not np.isnan(table_in[x][0]):
+                only_sort = True
        
-    else:
+    table = copy.deepcopy(table_in)
+    if not only_sort:
+        print_log(cfg,f'Before sorting: {table_in[0]}',case=['verbose'])
+        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])
+        
       
-        table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-            * u.km/u.s
-        table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-            * u.dimensionless_unscaled
+        if np.all(np.array(weights) == 1.) and not header_info is None:
+            weights = [header_info['pixelsize'], 
+                       header_info['channel_width']]
+        print_log(cfg,f'Using weights {weights}',case=['debug'])
+        if not vsys is None:
+            #throw all entries that have velocity nan out of the table, as we cannot use them for the distance calculation
+            table = table[~np.isnan(table['Velocity'])]
+        # Do not apply the weights to the spatial distance or velocity differences 
+        # as they are used a actual physical thresholds 
+        start = datetime.now()
+        print(f'Start spatial {start}')
+        table['Spatial Diff'] = [calculate_projected_distance([x,\
+            y],coordinates,no_PA = True) for x,y in zip(\
+            table['RA'],table['DEC'])]
+        end = datetime.now()
+        print(f'End spatial {end} duration {end-start}')
+        start = datetime.now()
+        print(f'Start velocity {start}')
+        if not vsys is None:
+            velocities = table['Velocity'].to(u.km/u.s)
+            if isquantity(velocities):
+                velocities = velocities
+            if isquantity(vsys):
+                vsys = vsys.to(u.km/u.s)
+            table['Velocity Diff'] = [abs(vsys-z)\
+                for z in velocities]
+
+            table['Combined Diff']= [float(np.sqrt(((x/weights[1]).decompose()**2
+                +(y/weights[0]).decompose()**2))) for x,y in\
+                zip(table['Velocity Diff'],table['Spatial Diff'])]
+        else:
+            table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
+                * u.km/u.s
+            table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
+                * u.dimensionless_unscaled
+        print(f'End velocity {datetime.now()} duration {datetime.now()-start}')
+
+    if vsys is None:    
         table.sort('Spatial Diff')
-    print_log(cfg,f'After sorting: {table}',case=['verbose'])
+    else:
+        table.sort('Combined Diff')
+    print_log(cfg,f'After sorting: {table[0]}',case=['verbose'])
         
     return table
            

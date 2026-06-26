@@ -85,7 +85,7 @@ def print_log(cfg,log_statement, case = ['main']):
             for key in stack():
                 if key[3] != 'linenumber' and key[3] != 'print_log' and key[3] != '<module>': 
                     current_function= f"{key[3]}"
-                break
+                    break
             if current_function.lower() in [x.lower() for x in  cfg.logging.debug_functions]:
                 trig=True      
         if trig:
@@ -155,11 +155,14 @@ print_log.__doc__ =f'''
     This is useful for testing functions.
 '''
 
-def start_new_log(cfg,basedir = os.getcwd()):
+def start_new_log(cfg,basedir = os.getcwd(),source = None):
     if cfg.logging.enable_log and cfg.logging.enable:
         if cfg.internal.input_log_directory[0] != '/':
             cfg.logging.log_directory = join_path(basedir, cfg.internal.input_log_directory)
-        cfg.logging.log_file = join_path(cfg.logging.log_directory, cfg.internal.input_log_file)  
+        cfg.logging.log_file = join_path(cfg.logging.log_directory, cfg.internal.input_log_file)
+        if source is not None:
+            ext = os.path.splitext(cfg.logging.log_file)[-1]
+            cfg.logging.log_file = cfg.logging.log_file.replace(ext,f'_{source}{ext}')  
         # create log directory if it does not exist
         if not os.path.exists(cfg.logging.log_directory):
             create_directory(cfg.logging.log_directory)
