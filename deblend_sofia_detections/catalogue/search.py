@@ -5,7 +5,7 @@ from deblend_sofia_detections.support.table_functions import check_table_length,
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
     isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
-    get_channel_width,get_ned_requested_metadata
+    get_channel_width,get_ned_requested_metadata,calculate_projected_distance_old
 from deblend_sofia_detections.support.logging import print_log
 
 from astropy.io import fits
@@ -296,15 +296,11 @@ def sort_on_distance(cfg, table_in, coordinates, vsys, header_info = None, weigh
             table = table[~np.isnan(table['Velocity'])]
         # Do not apply the weights to the spatial distance or velocity differences 
         # as they are used a actual physical thresholds 
-        start = datetime.now()
-        print(f'Start spatial {start}')
-        table['Spatial Diff'] = [calculate_projected_distance([x,\
-            y],coordinates,no_PA = True) for x,y in zip(\
-            table['RA'],table['DEC'])]
-        end = datetime.now()
-        print(f'End spatial {end} duration {end-start}')
-        start = datetime.now()
-        print(f'Start velocity {start}')
+       
+        table['Spatial Diff'] = calculate_projected_distance([table['RA'],table['DEC']],
+            coordinates,no_PA = True)
+        
+   
         if not vsys is None:
             velocities = table['Velocity'].to(u.km/u.s)
             if isquantity(velocities):
@@ -322,8 +318,7 @@ def sort_on_distance(cfg, table_in, coordinates, vsys, header_info = None, weigh
                 * u.km/u.s
             table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
                 * u.dimensionless_unscaled
-        print(f'End velocity {datetime.now()} duration {datetime.now()-start}')
-
+       
     if vsys is None:    
         table.sort('Spatial Diff')
     else:
