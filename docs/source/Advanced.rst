@@ -35,6 +35,27 @@ Input Keywords
   The input .par file containing the SOFIA run parameters. If there is no path it is assumed to be in the run directory. 
   If there is a path it should be the full path.
 
+**source_ids**:
+
+ *list of str, optional, default = []*
+
+  An optional allowlist of SoFiA catalogue source IDs to deblend. If the list is
+  empty, deblend checks every detection in the catalogue. If IDs are supplied,
+  only those detections are checked. IDs that are not present in the catalogue
+  cause the run to stop with an input error before source processing begins.
+
+  Quote IDs in YAML so they are treated consistently as catalogue identifiers::
+
+    input:
+      source_ids:
+        - "42"
+        - "57"
+        - "221"
+
+  This setting limits the detections considered for deblending; it does not make
+  a separate SoFiA run. If a selected source is split, the final SoFiA
+  re-parameterisation still uses the complete field mask and catalogue.
+
 **manual_input_tables**:
 
    *list of str, optional, default= []*
@@ -242,5 +263,4 @@ Internal Keywords
 
   *float, optional, default = 3.0*
 
-  The full width at half maximum (FWHM) of the kernel used for smoothing the optical image. 
-    
+  The full width at half maximum (FWHM) of the kernel used for smoothing the optical image.

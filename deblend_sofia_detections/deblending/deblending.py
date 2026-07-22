@@ -10,6 +10,7 @@ from deblend_sofia_detections.support.support_functions import match_size,\
     close_variables
 from deblend_sofia_detections.support.table_functions import read_manual_table
 from deblend_sofia_detections.support.errors import InputError
+from deblend_sofia_detections.support.source_selection import select_source_ids
 from astropy.convolution import convolve_fft
 from astropy.io import fits
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -298,6 +299,14 @@ def deblend_sofia_detections(cfg):
     #load the original sofia table
     sources,table_name = read_sofia_table(cfg,
         no_conversion = True)
+    source_ids_to_process = select_source_ids(
+        sources['id'], cfg.input.source_ids)
+
+    if cfg.general.verbose:
+        print(
+            f"Processing {len(source_ids_to_process)} of "
+            f"{len(sources)} SoFiA detections."
+        )
     
     if not os.path.exists(f'{cfg.internal.optical_background}'):
         if cfg.general.verbose:
@@ -313,7 +322,7 @@ def deblend_sofia_detections(cfg):
     else:
         usemoment = True
         usecube = False 
-    for id in sources['id']:
+    for id in source_ids_to_process:
         max_source_id = watershed_deblending(cfg,
                         cube_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_cube.fits",
                         mask_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_mask.fits",

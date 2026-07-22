@@ -11,6 +11,8 @@ import psutil
 @dataclass
 class Input:
     sofia_parameters: str = 'sofia_input.par' #Give full pathe else expected in the run directory
+    # Optional allowlist of SoFiA catalogue IDs. An empty list processes every detection.
+    source_ids: List[str] = field(default_factory=list)
     manual_input_tables:  List = field(default_factory=lambda: [None])
     original_tables: bool = False # If True we will use the original tables provided by the user instead looking for pickled ones
     # If the user provides a manual optical image, we will use that as the background for the deblending instead of downloading a DSS image. This can be useful if the user has a better optical image than the DSS one or if they want to use a different wavelength range for the optical image.
@@ -69,5 +71,3 @@ class defaults:
     directories: Directories = field(default_factory = Directories)
     internal: Internal = field(default_factory = Internal)
     sofia: Sofia = field(default_factory = Sofia)
-
-
