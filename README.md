@@ -415,6 +415,7 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `general.verbose` | `true` | Print progress and decisions. Keep enabled during initial trials. |
 | `general.ncpu` | available CPUs | Number passed to the peak-finding interface. The current fast local-maximum implementation itself is not parallelised. |
 | `general.multiprocessing` | `true` | Reserved multiprocessing preference. The current main source loop does not branch on this setting. |
+| `general.continue_on_source_error` | `true` | Record a source-level exception and continue with the next selected ID. |
 | `general.optical_pixel_scale` | `5.0` | Requested number of optical pixels across the H I beam; downloaded pixels are capped at 4 arcsec. |
 | `general.counterpart_region` | `Ellipse` | Spatial region used for counterpart matching. Supported choices include `Beam`, `3Beam`, `Box`, `Ellipse`, and `Full_Ellipse`. |
 | `general.debug` | `false` | Write additional diagnostic products. **This is not a dry-run mode.** |
@@ -430,6 +431,24 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 The `sofia` configuration section is populated from the original `.par` file and
 normally should not be set manually. `internal.sofia` is the useful exception when
 the SoFiA executable is not simply named `sofia`.
+
+### Source-level failure handling
+
+An exception raised while processing one cubelet is recorded and the run continues
+with the next selected SoFiA ID by default. At the end of every run,
+`Watershed_Output/deblend_failures.log` contains the source ID, cubelet path,
+exception type, reason, and full traceback for every failed attempt. The file is
+overwritten on each run, including successful runs, so an old failure report cannot
+be mistaken for the current result.
+
+A source that completes normally without being split is counted as successful.
+Only an uncaught exception is recorded as a failure. To stop at the first exception,
+set:
+
+```yaml
+general:
+  continue_on_source_error: false
+```
 
 ## Supplying a manual optical image
 

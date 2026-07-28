@@ -35,6 +35,7 @@ class General:
     except AttributeError:
         ncpu: int = psutil.cpu_count()
     multiprocessing: bool = True
+    continue_on_source_error: bool = True
     optical_pixel_scale: float = 5. # Amount of optical pixels that should cover a beam
     counterpart_region: str = 'Ellipse' 
     debug: bool = False

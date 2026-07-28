@@ -10,6 +10,8 @@ from deblend_sofia_detections.support.support_functions import match_size,\
     close_variables
 from deblend_sofia_detections.support.table_functions import read_manual_table
 from deblend_sofia_detections.support.errors import InputError
+from deblend_sofia_detections.support.failure_reporting import \
+    SourceFailure,write_failure_report
 from deblend_sofia_detections.support.source_selection import select_source_ids
 from astropy.convolution import convolve_fft
 from astropy.io import fits
@@ -32,6 +34,7 @@ import copy
 import numpy as np
 import os
 import shutil
+import traceback
 from datetime import datetime
 # -*- coding: future_fstrings -*-
 
@@ -322,15 +325,61 @@ def deblend_sofia_detections(cfg):
     else:
         usemoment = True
         usecube = False 
-    for id in source_ids_to_process:
-        max_source_id = watershed_deblending(cfg,
-                        cube_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_cube.fits",
-                        mask_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_mask.fits",
-                        mom0_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_mom0.fits",
-                        peak_deblending=cfg.input.use_peak_deblending,
-                        optical_deblending= cfg.input.use_optical_deblending,
-                        moment0_deblending=usemoment, cube_deblending=usecube,
-                        max_source_id=max_source_id)
+    failures = []
+    succeeded_count = 0
+    failure_report_path = join_path(
+        cfg.directories.watershed_directory, 'deblend_failures.log')
+
+    for source_id in source_ids_to_process:
+        cube_name = (
+            f"{cubelets_dir}{cfg.sofia.basename}_{source_id}_cube.fits")
+        try:
+            max_source_id = watershed_deblending(cfg,
+                            cube_name=cube_name,
+                            mask_name=f"{cubelets_dir}{cfg.sofia.basename}_{source_id}_mask.fits",
+                            mom0_name=f"{cubelets_dir}{cfg.sofia.basename}_{source_id}_mom0.fits",
+                            peak_deblending=cfg.input.use_peak_deblending,
+                            optical_deblending= cfg.input.use_optical_deblending,
+                            moment0_deblending=usemoment, cube_deblending=usecube,
+                            max_source_id=max_source_id)
+            succeeded_count += 1
+        except Exception as error:
+            failure = SourceFailure(
+                source_id=str(source_id),
+                cube_name=cube_name,
+                exception_type=type(error).__name__,
+                reason=str(error),
+                traceback_text=traceback.format_exc(),
+            )
+            failures.append(failure)
+            print(
+                f"Source {source_id} failed with "
+                f"{failure.exception_type}: {failure.reason}"
+            )
+
+            if cfg.general.continue_on_source_error:
+                print("Recording the failure and continuing with the next source.")
+            else:
+                write_failure_report(
+                    failure_report_path,
+                    failures,
+                    requested_count=len(source_ids_to_process),
+                    succeeded_count=succeeded_count,
+                )
+                print(f"Failure report written to {failure_report_path}")
+                raise
+
+    write_failure_report(
+        failure_report_path,
+        failures,
+        requested_count=len(source_ids_to_process),
+        succeeded_count=succeeded_count,
+    )
+    print(
+        f"Finished source processing: {succeeded_count} succeeded and "
+        f"{len(failures)} failed."
+    )
+    print(f"Failure report written to {failure_report_path}")
   
     if max_source_id > max_source_id_original:
         rerun_sofia(cfg)

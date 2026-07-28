@@ -138,11 +138,21 @@ General Keywords
 
   The number of CPU cores to use for processing.
 
-**multiprocessing**: 
+**multiprocessing**:
 
   *bool, optional, default = True*
 
   Whether to use multiprocessing for processing.
+
+**continue_on_source_error**:
+
+  *bool, optional, default = True*
+
+  Whether to record an exception from an individual SoFiA source and continue
+  with the next selected source. At the end of every run, a detailed report is
+  written to ``deblend_failures.log`` in the watershed output directory. Set
+  this to False to restore fail-fast behaviour; the partial failure report is
+  still written before the exception is raised again.
 
 **optical_pixel_scale**: 
 
