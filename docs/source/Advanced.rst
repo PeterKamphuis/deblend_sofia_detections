@@ -173,7 +173,15 @@ General Keywords
 
   *bool, optional, default = False*
 
-  Whether to print debug output during processing. This will print additional information about the processing steps and can be useful for troubleshooting and understanding the processing steps.
+  Whether to print debug output and write additional diagnostic products. Each
+  processed optical source receives
+  ``debug_products/optical_hi_catalogue_overlay_source_<ID>.png``: a grayscale
+  optical cutout with the H I source footprint in purple, faint moment-0
+  contours, cyan outlines and crosses at detected optical sources, and yellow
+  dots at manual or accepted NED catalogue positions. The plotted catalogue
+  rows are also written to ``catalogue_positions_source_<ID>.ecsv``. Plotting
+  failures produce warnings and do not stop source processing. This is not a
+  dry-run setting.
 
 Directories
 --------------

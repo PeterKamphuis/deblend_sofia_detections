@@ -3,6 +3,8 @@ from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
     mask_source_from_table,add_to_original
 from deblend_sofia_detections.deblending.peak_handling import find_peaks
+from deblend_sofia_detections.deblending.debug_visualization import \
+    catalogue_positions_from_table,write_source_debug_overlay_safely
 from deblend_sofia_detections.deblending.sofia_functions import read_sofia_table,\
     obtain_sofia_id, rerun_sofia
 from deblend_sofia_detections.support.system_functions import create_directory,join_path
@@ -741,18 +743,29 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         print(f"Found {no_source} sources in run_watershed.\n")
     return segments
 
-def set_optical_markers(cfg,sofia_id, mask):
+def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
     #If our mask is 3D we sum it to get the 2d mask
     if len(mask.shape) > 2:
         mask = np.nansum(mask, axis=0)
     # detect from the optical image
     detected_optical_markers,detected_optical_markers_header,used_mask = \
         detect_optical_sources(cfg,mask=mask,source_id=sofia_id)
+    if diagnostics is not None:
+        diagnostics['detected_optical_markers'] = np.ma.asarray(
+            detected_optical_markers
+        ).filled(0).copy()
+        diagnostics['catalogue_positions'] = []
     # and we want to add any source we know to exist
     if not cfg.input.manual_input_tables[0] is None:
         if cfg.general.verbose:
             print("Adding the manual optical source table.")
         source_table= read_manual_table(cfg)
+        if diagnostics is not None:
+            diagnostics['catalogue_positions'].extend(
+                catalogue_positions_from_table(
+                    source_table, catalogue="Manual input"
+                )
+            )
         optical_markers = mask_source_from_table(cfg, detected_optical_markers,
             detected_optical_markers_header, src_table=source_table,
             mask= used_mask)   
@@ -827,13 +840,47 @@ def watershed_deblending(cfg_in, cube_name = None,
     results = { 'optical_moment0': [False, 0],
                 'optical_cube': [False, 0],
                 'hi_peaks': [False, 0]}
+    debug_overlay = None
+    catalogue_positions = []
     if optical_deblending:
         # If we do deblending based on optical image
         # We first prepare the optical image
         prepare_background_optical_image(cfg,cube,source_id=sofia_id)
         # Then we set markers based on the optical image and our input tables
         # but only within our HI mask 
-        optical_markers,markers_header = set_optical_markers(cfg, sofia_id, mask[0].data)
+        marker_diagnostics = {}
+        optical_markers,markers_header = set_optical_markers(
+            cfg,
+            sofia_id,
+            mask[0].data,
+            diagnostics=marker_diagnostics,
+        )
+        catalogue_positions.extend(
+            marker_diagnostics.get('catalogue_positions', [])
+        )
+        if cfg.general.debug and mom0 is not None:
+            debug_overlay = {
+                'optical_image_name': cfg.internal.cleaned_optical_background,
+                'moment0_data': mom0[0].data,
+                'moment0_header': mom0[0].header,
+                'source_mask': mask[0].data,
+                'marker_data': marker_diagnostics.get(
+                    'detected_optical_markers', optical_markers
+                ),
+                'catalogue_positions': catalogue_positions,
+                'output_name': (
+                    f"{outdir}debug_products/"
+                    f"optical_hi_catalogue_overlay_source_{sofia_id}.png"
+                ),
+                'catalogue_output_name': (
+                    f"{outdir}debug_products/"
+                    f"catalogue_positions_source_{sofia_id}.ecsv"
+                ),
+                'source_id': sofia_id,
+            }
+            # Write this once before watershed so a later source-level failure
+            # does not remove the most useful optical diagnostic.
+            write_source_debug_overlay_safely(**debug_overlay)
         # If we have only one marker or less we do not want to deblend based on the 
         # optical image because it is not useful and can lead to oversegmentation
         if len(np.unique(optical_markers.data)) - 1 <= 1:
@@ -890,7 +937,18 @@ def watershed_deblending(cfg_in, cube_name = None,
    
    
     if not final_mask_name is None:  
-        stil_split = split_sources(cfg,cube_name, final_mask_name, outdir=outdir)  # skip the background
+        stil_split = split_sources(
+            cfg,
+            cube_name,
+            final_mask_name,
+            outdir=outdir,
+            counterpart_positions=catalogue_positions,
+        )  # skip the background
+        if debug_overlay is not None:
+            # Counterpart matching happens in split_sources. Rewrite the same
+            # plot so accepted manual/NED matches appear as yellow points.
+            debug_overlay['catalogue_positions'] = catalogue_positions
+            write_source_debug_overlay_safely(**debug_overlay)
         # If we are running as a larger sofia run update the catalogue and cubelets
         if stil_split:
             max_source_id =create_final_mask(cfg, input_mask_name=final_mask_name,

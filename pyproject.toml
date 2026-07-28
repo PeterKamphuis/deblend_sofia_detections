@@ -29,6 +29,7 @@ dependencies = [
     'astropy>=7.1.0',
     'astroquery',
     'make_moments>=1.0.8',
+    'matplotlib',
     'photutils',
     'scikit-image',
 ]
@@ -47,6 +48,5 @@ include = [
     "/deblend_sofia_detections",
     "/deblend_sofia_detections/deblend_sofia_detections/template/*.par",
 ]
-
 
 

@@ -418,7 +418,7 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `general.continue_on_source_error` | `true` | Record a source-level exception and continue with the next selected ID. |
 | `general.optical_pixel_scale` | `5.0` | Requested number of optical pixels across the H I beam; downloaded pixels are capped at 4 arcsec. |
 | `general.counterpart_region` | `Ellipse` | Spatial region used for counterpart matching. Supported choices include `Beam`, `3Beam`, `Box`, `Ellipse`, and `Full_Ellipse`. |
-| `general.debug` | `false` | Write additional diagnostic products. **This is not a dry-run mode.** |
+| `general.debug` | `false` | Write additional diagnostic products, including a per-source optical/H I/catalogue QA plot. **This is not a dry-run mode.** |
 
 ### Directory settings
 
@@ -525,6 +525,8 @@ sofia_output/
         │   ├── ..._mask.fits
         │   └── ..._cubelets/
         └── debug_products/
+            ├── optical_hi_catalogue_overlay_source_42.png
+            └── catalogue_positions_source_42.ecsv
 ```
 
 Not every file appears for every source:
@@ -536,7 +538,20 @@ Not every file appears for every source:
   field mask;
 - `Sofia_Output/` contains the temporary SoFiA measurement of proposed children;
 - `debug_products/` exists when `general.debug: true` and contains intermediate
-  markers, smoothed cubes, and watershed diagnostics.
+  markers, smoothed cubes, watershed diagnostics, and a per-source QA image. In
+  `optical_hi_catalogue_overlay_source_<ID>.png`, the optical cutout is the
+  grayscale background, the original H I footprint is purple, faint lavender
+  contours show moment-0 intensity, cyan outlines and crosses mark automatically
+  detected optical sources, and yellow dots mark manual or accepted NED catalogue
+  positions. `catalogue_positions_source_<ID>.ecsv` records the catalogue name,
+  object name, RA, and Dec for every yellow dot. If no catalogue position falls
+  inside the cutout, the table is empty and the plot says so explicitly.
+
+The QA plot is first written immediately after optical-source detection and is
+updated after counterpart matching. Consequently, an early plot is normally
+still available if a later watershed or trial-SoFiA step fails. Plotting errors
+are reported as warnings and do not fail or skip the scientific source
+processing.
 
 If at least one split is accepted, the code also:
 

@@ -4,6 +4,8 @@ from deblend_sofia_detections.catalogue.search import \
 from deblend_sofia_detections.deblending.sofia_functions import \
     load_sofia_input_file,set_sofia,write_sofia,read_sofia_table,\
     execute_sofia
+from deblend_sofia_detections.deblending.debug_visualization import \
+    matched_counterpart_positions
 from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
@@ -315,7 +317,7 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 
 
 def split_sources(cfg_in,cube_name, mask, 
-        outdir='./', catalogue = False):
+        outdir='./', catalogue = False, counterpart_positions=None):
     """
     Split the sources in the deblended 3D data cube.
     
@@ -334,7 +336,7 @@ def split_sources(cfg_in,cube_name, mask,
     if not os.path.exists(f'{outdir}/Sofia_Output/'):
         create_directory('Sofia_Output',base_directory=outdir)
 
-     
+
 
     sofia_temp= set_sofia(sofia_temp, cube_name, mask,outdir) 
 
@@ -369,6 +371,10 @@ def split_sources(cfg_in,cube_name, mask,
          
             source = search_counter_part(cfg,source,basename=watername,
                     query='Manual',sofia_directory=f'{outdir}/Sofia_Output/')
+            if counterpart_positions is not None:
+                counterpart_positions.extend(
+                    matched_counterpart_positions(source)
+                )
             
           
             if source['Manual_spectroscopic']:
@@ -452,4 +458,3 @@ def subtract_background(cfg,image,wcs):
     close_variables(image,background,wcs)
     return new_image,new_wcs
 
-     
