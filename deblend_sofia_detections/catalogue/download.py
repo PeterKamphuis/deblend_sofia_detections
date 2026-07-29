@@ -2,7 +2,7 @@
 #Functions that look for optical image
 
 from deblend_sofia_detections.deblending.image_manipulation import cut_optical
-from deblend_sofia_detections.support.errors import DownloadError
+from deblend_sofia_detections.support.errors import DownloadError,InputError
 from astropy import units as u
 from astropy.io import fits
 from astroquery.skyview import SkyView
@@ -45,14 +45,21 @@ def creating_full_FOV_optical(cfg):
         if cfg.general.verbose:
             print(f'Checking manual input')
         for identifier in cfg.input.manual_optical_image:
-            if os.path.isfile(identifier):
-                print(f'Found manual optical image: {identifier}')
+            if identifier is None:
+                continue
+            if not os.path.isfile(identifier):
+                raise InputError(
+                    f"Manual optical image does not exist: {identifier}"
+                )
+            print(f'Found manual optical image: {identifier}')
             manual_path,manual_file = os.path.split(identifier)
             if manual_path == '':
                 manual_path = './'
             cutout = cut_optical(mom0_header,mom0_wcs,\
                 manual_path,
-                manual_file)
+                manual_file,
+                debug=cfg.general.debug,
+                verbose=cfg.general.verbose)
 
             cutout_hdr = cutout.wcs.to_header()
             cutout_hdr['COMMENT'] =  f'The original file was  {identifier}'

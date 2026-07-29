@@ -399,7 +399,7 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `input.sofia_parameters` | `sofia_input.par` | Original `.par` file for the complete SoFiA run being deblended. |
 | `input.source_ids` | `[]` | Optional catalogue-ID allowlist. Empty means all IDs. Unknown IDs stop before source processing. |
 | `input.manual_input_tables` | `[null]` | Optional `.csv`, `.txt`, or compatible pickled counterpart tables. |
-| `input.manual_optical_image` | `[null]` | Optional WCS-aware optical FITS image. Only the first image is currently used. |
+| `input.manual_optical_image` | `[null]` | Optional celestial-WCS optical FITS image. A 2-D image is used directly; multi-plane images are collapsed over non-celestial axes. Only the first image is currently used. |
 | `input.original_tables` | `false` | Reread supplied text tables instead of using cached pickle files. This is not a backup/safety option. |
 | `input.original_images` | `false` | Recreate cached optical products from the supplied image or SkyView. This is not a backup/safety option. |
 | `input.use_optical_deblending` | `true` | Detect optical markers and try an optical watershed split. |
@@ -466,6 +466,61 @@ The program cuts the image to the SoFiA field and stores processed products in t
 ancillary directory. After the first successful run, set `original_images: false`
 to reuse the cached image. Set it back to `true` after replacing the optical FITS
 or when you intentionally want to rebuild all processed cutouts.
+
+A manual image must contain a valid celestial WCS. Two-dimensional FITS images
+are used directly. For an RGB, RGBA, or other multi-plane image, the program
+identifies the two celestial axes from the WCS and averages every non-celestial
+array axis to form a grayscale 2-D image before making the cutout. The log records
+the original shape and collapsed axes. If the celestial axes cannot be identified,
+the file contains no suitable image HDU, or it does not overlap the SoFiA field,
+the run stops with an explicit input error rather than the less informative
+Astropy dimension-mismatch traceback.
+
+### Standalone optical FITS converter
+
+The repository includes `scripts/convert_optical_fits_to_2d.py` for converting
+an optical image before running the deblender. It accepts any FITS image with at
+least two dimensions and a celestial WCS. The default operation averages all
+non-celestial planes. Supplying only the input creates `<input>_2d.fits` in the
+same directory:
+
+```bash
+python scripts/convert_optical_fits_to_2d.py \
+  "/data/Abell-548-colour.fits"
+```
+
+This writes `/data/Abell-548-colour_2d.fits`. An explicit output path is also
+supported:
+
+```bash
+python scripts/convert_optical_fits_to_2d.py \
+  "/data/Abell-548-colour.fits" \
+  "/data/Abell-548-optical-2d.fits"
+```
+
+For a more outlier-resistant collapse, use the median:
+
+```bash
+python scripts/convert_optical_fits_to_2d.py \
+  input.fits output_2d.fits \
+  --method median
+```
+
+Use `--method first` to select the first plane along every non-celestial axis,
+`--hdu 1` (or an extension name) to choose a specific image HDU, and
+`--overwrite` to replace an existing output file. The script never allows the
+input path itself to be overwritten. It writes a float32 image by default,
+retains the celestial WCS and useful observing metadata, records the conversion
+in FITS `HISTORY`, and verifies that the written result is two-dimensional.
+
+Point the YAML at the converted file and rebuild the cached optical products:
+
+```yaml
+input:
+  manual_optical_image:
+    - /data/Abell-548-optical-2d.fits
+  original_images: true
+```
 
 ## Supplying a manual counterpart table
 

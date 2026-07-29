@@ -10,6 +10,9 @@ from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
     close_variables
+from deblend_sofia_detections.support.optical_image import \
+    celestial_numpy_axes,collapse_optical_data
+from deblend_sofia_detections.support.errors import InputError
 
 
 from astropy.convolution import convolve,Gaussian1DKernel
@@ -39,22 +42,81 @@ import numpy as np
 import os
 
 
-def cut_optical(hdr_over,wcs,dir,image,debug=False,verbose=False):
-    '''Cut out the optical image'''
-    #load a smaller part from a larger fits image
-    optical_image=fits.open(f'{dir}/{image}')
-   
+def _celestial_numpy_axes(full_wcs, data_ndim):
+    """Map the WCS celestial pixel axes to NumPy array-axis indices."""
     try:
-        hdr = optical_image[0].header
-        data = optical_image[0].data
-    except:
-        try:
-            hdr = optical_image.header
-            data = optical_image.data
-        except:
-            return None
+        return celestial_numpy_axes(
+            full_wcs.get_axis_types(),
+            full_wcs.axis_correlation_matrix,
+            full_wcs.pixel_n_dim,
+            data_ndim,
+        )
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
 
-    opt_wcs= WCS(hdr)
+
+def cut_optical(hdr_over,wcs,dir,image,debug=False,verbose=False):
+    """Cut a 2-D celestial image from a 2-D or multi-plane optical FITS."""
+    optical_path = os.path.join(dir, image)
+    try:
+        # Scaled integer FITS images (BSCALE/BZERO) cannot always be accessed
+        # through Astropy's memory mapping, so load them normally here.
+        optical_image = fits.open(optical_path, memmap=False)
+    except (OSError, ValueError) as error:
+        raise InputError(
+            f"Could not open optical FITS image {optical_path}: {error}"
+        ) from error
+
+    try:
+        image_hdu = next(
+            (
+                hdu
+                for hdu in optical_image
+                if hdu.data is not None and np.ndim(hdu.data) >= 2
+            ),
+            None,
+        )
+        if image_hdu is None:
+            raise InputError(
+                f"Optical FITS image {optical_path} contains no image HDU "
+                "with at least two dimensions."
+            )
+        hdr = image_hdu.header.copy()
+        data = np.asanyarray(image_hdu.data)
+        try:
+            full_wcs = WCS(hdr)
+            opt_wcs = full_wcs.celestial
+        except Exception as error:
+            raise InputError(
+                f"Optical FITS image {optical_path} has an invalid WCS: "
+                f"{error}"
+            ) from error
+        if not full_wcs.has_celestial:
+            raise InputError(
+                f"Optical FITS image {optical_path} has no celestial WCS."
+            )
+        original_shape = data.shape
+        celestial_axes = _celestial_numpy_axes(full_wcs, data.ndim)
+        try:
+            data, collapsed_axes = collapse_optical_data(
+                data, celestial_numpy_axes=celestial_axes
+            )
+        except ValueError as error:
+            raise InputError(
+                f"Could not convert optical FITS image {optical_path} with "
+                f"shape {original_shape} into a 2-D celestial image: {error}"
+            ) from error
+        if collapsed_axes and verbose:
+            print(
+                f"Optical image {optical_path} has shape {original_shape}. "
+                f"Averaging non-celestial array axis/axes "
+                f"{list(collapsed_axes)} produced the 2-D image "
+                f"{data.shape}."
+            )
+    except Exception:
+        optical_image.close()
+        raise
+
     sizecut = [hdr_over['NAXIS1'], hdr_over['NAXIS2']]
     centralpix = [hdr_over['NAXIS1']/ 2., hdr_over['NAXIS2']/ 2.]
     rascr, decscr = wcs.wcs_pix2world(*centralpix,1.)
@@ -62,12 +124,20 @@ def cut_optical(hdr_over,wcs,dir,image,debug=False,verbose=False):
     size = u.Quantity((sizecut[1]* 3600 * abs(hdr_over['CDELT2']),\
                        sizecut[0]* 3600 * abs(hdr_over['CDELT1'])), u.arcsec)
     try:
-        optical_cutout = Cutout2D(data, obj_coords, size, wcs=opt_wcs)
-    except NoOverlapError:
-        if verbose:
-            print(f'No overlap between the optical image and the SOFIA image')
-        optical_cutout = None
-    optical_image.close()
+        optical_cutout = Cutout2D(
+            data, obj_coords, size, wcs=opt_wcs, copy=True
+        )
+    except NoOverlapError as error:
+        raise InputError(
+            f"Optical image {optical_path} does not overlap the SoFiA field."
+        ) from error
+    except Exception as error:
+        raise InputError(
+            f"Could not cut the 2-D optical image {optical_path} with shape "
+            f"{data.shape}: {error}"
+        ) from error
+    finally:
+        optical_image.close()
     return optical_cutout
 
 def add_to_original(original_data, cut_data,sofia_id = 1):
@@ -105,7 +175,14 @@ def freq_smooth(cube, bin_size=0, smooth=0):
 
 def get_background(cfg, match_header=None, wcs=None):   
     optdir,optfile = os.path.split(cfg.internal.optical_background)
-    optical = cut_optical(match_header,wcs,optdir,optfile)
+    optical = cut_optical(
+        match_header,
+        wcs,
+        optdir,
+        optfile,
+        debug=cfg.general.debug,
+        verbose=cfg.general.verbose,
+    )
     bckgrnd_wcs = optical.wcs
     bckgrnd = optical.data
     bckgrnd = bckgrnd.astype(np.float32)
@@ -457,4 +534,3 @@ def subtract_background(cfg,image,wcs):
     new_wcs = copy.deepcopy(wcs)
     close_variables(image,background,wcs)
     return new_image,new_wcs
-

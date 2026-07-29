@@ -76,9 +76,15 @@ Input Keywords
 
   *list of str, optional, default= []*
 
-  A list of optical images to use for the deblending process. If not specified, images will be used downloaded from SkyView.
-  The images should be in the run_directory the ancillary_directory or the data_directory or be provided with the full path.  
-  At the moment only one image is supported but in the future we can expand this to multiple images and then use the one that best matche. the field of view of the data cube.
+  A list of optical images to use for the deblending process. If not specified,
+  an image will be downloaded from SkyView. Images should be in the
+  ``run_directory``, ``ancillary_directory``, or ``data_directory``, or be
+  provided with a full path. A manual FITS image must contain a celestial WCS.
+  A 2-D image is used directly. RGB, RGBA, and other multi-plane images are
+  converted to grayscale by averaging every non-celestial array axis before the
+  2-D cutout is made. Verbose mode reports the original shape and collapsed
+  axes. Missing files, invalid WCS, and non-overlapping images produce explicit
+  input errors. At the moment only one image is supported.
  
   
 **original_images**:
