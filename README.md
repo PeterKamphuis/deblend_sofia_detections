@@ -581,6 +581,7 @@ sofia_output/
         │   └── ..._cubelets/
         └── debug_products/
             ├── optical_hi_catalogue_overlay_source_42.png
+            ├── optical_hi_components_overlay_source_42.png
             └── catalogue_positions_source_42.ecsv
 ```
 
@@ -601,6 +602,13 @@ Not every file appears for every source:
   positions. `catalogue_positions_source_<ID>.ecsv` records the catalogue name,
   object name, RA, and Dec for every yellow dot. If no catalogue position falls
   inside the cutout, the table is empty and the plot says so explicitly.
+- `optical_hi_components_overlay_source_<ID>.png` retains the same optical,
+  parent-H I, optical-detection, and catalogue context, then adds one distinct
+  contour colour for every child from the first trial SoFiA parameterisation.
+  A matching coloured circle and label mark the child's SoFiA catalogue RA/Dec.
+  These are raw candidate children shown before counterpart-based merging or
+  rejection; they are not confirmation of separate galaxies or accepted final
+  catalogue sources.
 
 The QA plot is first written immediately after optical-source detection and is
 updated after counterpart matching. Consequently, an early plot is normally

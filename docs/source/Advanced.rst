@@ -186,8 +186,13 @@ General Keywords
   contours, cyan outlines and crosses at detected optical sources, and yellow
   dots at manual or accepted NED catalogue positions. The plotted catalogue
   rows are also written to ``catalogue_positions_source_<ID>.ecsv``. Plotting
-  failures produce warnings and do not stop source processing. This is not a
-  dry-run setting.
+  failures produce warnings and do not stop source processing.
+  ``debug_products/optical_hi_components_overlay_source_<ID>.png`` is a
+  companion view with separately coloured contours for every raw child from
+  the first trial SoFiA parameterisation. Matching coloured circles and labels
+  mark the child catalogue RA/Dec centres. These components are captured before
+  catalogue-based merging or rejection and are not confirmed galaxies or
+  accepted final catalogue sources. This is not a dry-run setting.
 
 Directories
 --------------

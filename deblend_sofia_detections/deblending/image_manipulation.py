@@ -5,7 +5,8 @@ from deblend_sofia_detections.deblending.sofia_functions import \
     load_sofia_input_file,set_sofia,write_sofia,read_sofia_table,\
     execute_sofia
 from deblend_sofia_detections.deblending.debug_visualization import \
-    matched_counterpart_positions
+    matched_counterpart_positions,trial_hi_components_from_table,\
+    write_hi_component_debug_overlay_safely
 from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
@@ -394,7 +395,8 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 
 
 def split_sources(cfg_in,cube_name, mask, 
-        outdir='./', catalogue = False, counterpart_positions=None):
+        outdir='./', catalogue = False, counterpart_positions=None,
+        debug_overlay=None):
     """
     Split the sources in the deblended 3D data cube.
     
@@ -439,6 +441,40 @@ def split_sources(cfg_in,cube_name, mask,
         present_id = [int(x) for x in split_sources['id']]
        
         watername= os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
+        if counter == 0 and debug_overlay is not None:
+            components = trial_hi_components_from_table(
+                split_sources,
+                cubelet_directory=(
+                    f"{outdir}/Sofia_Output/{watername}_cubelets"
+                ),
+                basename=watername,
+            )
+            if components:
+                component_overlay = {
+                    key: debug_overlay[key]
+                    for key in (
+                        "optical_image_name",
+                        "moment0_data",
+                        "moment0_header",
+                        "source_mask",
+                        "marker_data",
+                        "catalogue_positions",
+                        "source_id",
+                    )
+                }
+                component_overlay.update(
+                    {
+                        "components": components,
+                        "output_name": (
+                            f"{outdir}debug_products/"
+                            "optical_hi_components_overlay_source_"
+                            f"{debug_overlay['source_id']}.png"
+                        ),
+                    }
+                )
+                write_hi_component_debug_overlay_safely(
+                    **component_overlay
+                )
         for source in split_sources:
             if cfg.general.verbose:
                 print(f"Processing source with id {source['id']} and name {source['name']}")

@@ -1,15 +1,21 @@
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
 from deblend_sofia_detections.deblending.debug_visualization import (
     catalogue_positions_from_table,
+    component_colour_mapping,
     contour_levels,
     deduplicate_positions,
     marker_centroids,
     matched_counterpart_positions,
+    trial_hi_components_from_table,
+    write_hi_component_debug_overlay,
+    write_hi_component_debug_overlay_safely,
     write_source_debug_overlay_safely,
 )
 
@@ -49,6 +55,176 @@ class DebugVisualizationTests(unittest.TestCase):
         self.assertEqual(len(levels), 3)
         self.assertTrue(all(1.0 < level < 4.0 for level in levels))
         self.assertEqual(levels, sorted(levels))
+
+    def test_component_colours_follow_sorted_ids_and_are_distinct(self):
+        colours = component_colour_mapping(["10", 2, "1"])
+
+        self.assertEqual(list(colours), ["1", "2", "10"])
+        self.assertEqual(len(set(colours.values())), 3)
+
+    def test_trial_components_skip_missing_maps_and_keep_invalid_centres(self):
+        from astropy.io import fits
+        from astropy.table import Table
+
+        with TemporaryDirectory() as temporary_directory:
+            cubelet_directory = Path(temporary_directory)
+            fits.PrimaryHDU(np.ones((4, 4))).writeto(
+                cubelet_directory / "trial_1_mom0.fits"
+            )
+            fits.PrimaryHDU(np.ones((4, 4))).writeto(
+                cubelet_directory / "trial_2_mom0.fits"
+            )
+            table = Table(
+                {
+                    "id": [2, 3, 1],
+                    "ra": [10.2, 10.3, np.nan],
+                    "dec": [-20.2, -20.3, np.nan],
+                }
+            )
+            output = StringIO()
+            with redirect_stdout(output):
+                components = trial_hi_components_from_table(
+                    table,
+                    cubelet_directory=cubelet_directory,
+                    basename="trial",
+                )
+
+        self.assertEqual(
+            [component["id"] for component in components],
+            ["1", "2"],
+        )
+        self.assertTrue(np.isnan(components[0]["ra_deg"]))
+        self.assertEqual(components[1]["ra_deg"], 10.2)
+        self.assertIn("component 3", output.getvalue())
+
+    def test_two_trial_children_render_with_catalogue_centres(self):
+        from astropy.io import fits
+        from astropy.wcs import WCS
+
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            wcs = WCS(naxis=2)
+            wcs.wcs.crpix = [20.0, 20.0]
+            wcs.wcs.cdelt = np.array([-0.001, 0.001])
+            wcs.wcs.crval = [10.0, -20.0]
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+            header = wcs.to_header()
+
+            optical_name = directory / "optical.fits"
+            fits.PrimaryHDU(
+                np.arange(1600, dtype=float).reshape(40, 40),
+                header=header,
+            ).writeto(optical_name)
+
+            child_names = []
+            centres = []
+            yy, xx = np.indices((40, 40))
+            for component_id, x_centre, y_centre in (
+                ("1", 14, 18),
+                ("2", 26, 22),
+            ):
+                child_data = np.exp(
+                    -(
+                        (xx - x_centre) ** 2
+                        + (yy - y_centre) ** 2
+                    )
+                    / 12.0
+                )
+                child_name = directory / f"trial_{component_id}_mom0.fits"
+                fits.PrimaryHDU(child_data, header=header).writeto(child_name)
+                child_names.append(child_name)
+                centres.append(
+                    wcs.pixel_to_world_values(x_centre, y_centre)
+                )
+
+            output_name = directory / "component_overlay.png"
+            output_path = write_hi_component_debug_overlay(
+                optical_image_name=optical_name,
+                moment0_data=np.arange(
+                    1600, dtype=float
+                ).reshape(40, 40),
+                moment0_header=header,
+                source_mask=np.ones((3, 40, 40)),
+                marker_data=np.zeros((40, 40)),
+                catalogue_positions=[],
+                components=[
+                    {
+                        "id": str(index + 1),
+                        "moment0_name": str(child_name),
+                        "ra_deg": centres[index][0],
+                        "dec_deg": centres[index][1],
+                    }
+                    for index, child_name in enumerate(child_names)
+                ],
+                output_name=output_name,
+                source_id="36",
+            )
+
+            self.assertEqual(output_path, output_name)
+            self.assertTrue(output_name.is_file())
+            self.assertGreater(output_name.stat().st_size, 0)
+
+    def test_component_safe_writer_ignores_empty_component_list(self):
+        result = write_hi_component_debug_overlay_safely(
+            components=[],
+            source_id="36",
+        )
+
+        self.assertIsNone(result)
+
+    def test_invalid_child_wcs_does_not_hide_valid_child(self):
+        from astropy.io import fits
+        from astropy.wcs import WCS
+
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            wcs = WCS(naxis=2)
+            wcs.wcs.crpix = [10.0, 10.0]
+            wcs.wcs.cdelt = np.array([-0.001, 0.001])
+            wcs.wcs.crval = [10.0, -20.0]
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+            header = wcs.to_header()
+            yy, xx = np.indices((20, 20))
+            data = np.exp(-((xx - 10) ** 2 + (yy - 10) ** 2) / 8.0)
+
+            optical_name = directory / "optical.fits"
+            valid_name = directory / "trial_1_mom0.fits"
+            invalid_name = directory / "trial_2_mom0.fits"
+            fits.PrimaryHDU(data, header=header).writeto(optical_name)
+            fits.PrimaryHDU(data, header=header).writeto(valid_name)
+            fits.PrimaryHDU(data).writeto(invalid_name)
+
+            output_name = directory / "component_overlay.png"
+            output = StringIO()
+            with redirect_stdout(output):
+                result = write_hi_component_debug_overlay_safely(
+                    optical_image_name=optical_name,
+                    moment0_data=data,
+                    moment0_header=header,
+                    source_mask=np.ones((2, 20, 20)),
+                    marker_data=np.zeros((20, 20)),
+                    catalogue_positions=[],
+                    components=[
+                        {
+                            "id": "1",
+                            "moment0_name": str(valid_name),
+                            "ra_deg": 10.0,
+                            "dec_deg": -20.0,
+                        },
+                        {
+                            "id": "2",
+                            "moment0_name": str(invalid_name),
+                            "ra_deg": np.nan,
+                            "dec_deg": np.nan,
+                        },
+                    ],
+                    output_name=output_name,
+                    source_id="36",
+                )
+
+            self.assertEqual(result, output_name)
+            self.assertTrue(output_name.is_file())
+            self.assertIn("component 2", output.getvalue())
 
     def test_later_catalogue_match_replaces_duplicate_input_position(self):
         positions = [

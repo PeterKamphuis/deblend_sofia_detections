@@ -943,6 +943,7 @@ def watershed_deblending(cfg_in, cube_name = None,
             final_mask_name,
             outdir=outdir,
             counterpart_positions=catalogue_positions,
+            debug_overlay=debug_overlay,
         )  # skip the background
         if debug_overlay is not None:
             # Counterpart matching happens in split_sources. Rewrite the same

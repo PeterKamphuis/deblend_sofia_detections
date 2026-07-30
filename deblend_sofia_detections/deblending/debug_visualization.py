@@ -11,6 +11,113 @@ OPTICAL_MARKER_COLOUR = "#35e6e6"
 CATALOGUE_COLOUR = "#ffd400"
 
 
+def _normalise_component_id(value):
+    """Return the file/legend representation used for a SoFiA source ID."""
+    if np.ma.is_masked(value):
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    try:
+        numeric_value = float(value)
+        if np.isfinite(numeric_value) and numeric_value.is_integer():
+            return str(int(numeric_value))
+    except (TypeError, ValueError):
+        pass
+    return str(value).strip()
+
+
+def _component_sort_key(component_id):
+    try:
+        return (0, int(component_id))
+    except (TypeError, ValueError):
+        return (1, str(component_id))
+
+
+def component_colour_mapping(component_ids):
+    """Assign stable, distinct colours to sorted trial-component IDs."""
+    import matplotlib
+    from matplotlib.colors import to_hex
+
+    normalised_ids = sorted(
+        {
+            component_id
+            for component_id in (
+                _normalise_component_id(value) for value in component_ids
+            )
+            if component_id
+        },
+        key=_component_sort_key,
+    )
+    if not normalised_ids:
+        return {}
+
+    colour_map = matplotlib.colormaps[
+        "tab10" if len(normalised_ids) <= 10 else "hsv"
+    ]
+    colours = [
+        to_hex(
+            colour_map(index)
+            if len(normalised_ids) <= 10
+            else colour_map(index / len(normalised_ids))
+        )
+        for index in range(len(normalised_ids))
+    ]
+    return dict(zip(normalised_ids, colours))
+
+
+def trial_hi_components_from_table(table, cubelet_directory, basename):
+    """Describe trial SoFiA children and their moment-0 products."""
+    if table is None or not hasattr(table, "colnames"):
+        return []
+    id_column = _column_name(table, "id")
+    if id_column is None:
+        print(
+            "WARNING: Trial SoFiA catalogue has no ID column; "
+            "cannot create the H I component overlay."
+        )
+        return []
+
+    ra_column = _column_name(table, "ra")
+    dec_column = _column_name(table, "dec")
+    components = []
+    for row in table:
+        component_id = _normalise_component_id(row[id_column])
+        if not component_id:
+            continue
+        moment0_name = (
+            Path(cubelet_directory)
+            / f"{basename}_{component_id}_mom0.fits"
+        )
+        if not moment0_name.is_file():
+            print(
+                "WARNING: Missing trial H I moment-0 map for component "
+                f"{component_id}: {moment0_name}"
+            )
+            continue
+
+        ra_deg = float("nan")
+        dec_deg = float("nan")
+        if ra_column is not None and dec_column is not None:
+            try:
+                ra_deg = _coordinate_in_degrees(row[ra_column])
+                dec_deg = _coordinate_in_degrees(row[dec_column])
+            except (TypeError, ValueError):
+                pass
+        components.append(
+            {
+                "id": component_id,
+                "moment0_name": str(moment0_name),
+                "ra_deg": ra_deg,
+                "dec_deg": dec_deg,
+            }
+        )
+
+    return sorted(
+        components,
+        key=lambda component: _component_sort_key(component["id"]),
+    )
+
+
 def marker_centroids(marker_data):
     """Return ``(x, y, label)`` centroids for positive marker labels."""
     markers = np.ma.asarray(marker_data).filled(0)
@@ -469,6 +576,370 @@ def write_source_debug_overlay_safely(**kwargs):
         source_id = kwargs.get("source_id", "unknown")
         print(
             "WARNING: Could not create the optical/H I/catalogue debug "
+            f"overlay for SoFiA source {source_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+        return None
+
+
+def write_hi_component_debug_overlay(
+    *,
+    optical_image_name,
+    moment0_data,
+    moment0_header,
+    source_mask,
+    marker_data,
+    catalogue_positions,
+    components,
+    output_name,
+    source_id,
+):
+    """Write raw trial-child H I contours and centres on the optical QA view."""
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib import pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+
+    from astropy.coordinates import SkyCoord
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    import astropy.units as u
+
+    optical_data = np.squeeze(fits.getdata(optical_image_name))
+    optical_header = fits.getheader(optical_image_name)
+    if optical_data.ndim != 2:
+        raise ValueError(
+            f"Expected a 2-D optical image, found shape {optical_data.shape}."
+        )
+    optical_wcs = WCS(optical_header).celestial
+
+    parent_data = np.squeeze(np.asarray(moment0_data, dtype=float))
+    if parent_data.ndim != 2:
+        raise ValueError(
+            "Expected a 2-D parent H I moment-0 image, "
+            f"found shape {parent_data.shape}."
+        )
+    parent_wcs = WCS(moment0_header).celestial
+
+    parent_mask = np.asarray(source_mask)
+    if parent_mask.ndim == 3:
+        parent_mask = np.any(parent_mask > 0, axis=0)
+    else:
+        parent_mask = parent_mask > 0
+    if parent_mask.shape != parent_data.shape:
+        raise ValueError(
+            "The projected parent mask and moment-0 image have different "
+            f"shapes: {parent_mask.shape} and {parent_data.shape}."
+        )
+
+    colours = component_colour_mapping(
+        [component.get("id", "") for component in components]
+    )
+    usable_components = []
+    for component in components:
+        component_id = _normalise_component_id(component.get("id", ""))
+        try:
+            child_data = np.squeeze(
+                np.asarray(
+                    fits.getdata(component["moment0_name"]),
+                    dtype=float,
+                )
+            )
+            child_header = fits.getheader(component["moment0_name"])
+            if child_data.ndim != 2:
+                raise ValueError(
+                    f"expected two dimensions, found {child_data.shape}"
+                )
+            child_wcs = WCS(child_header).celestial
+            if not child_wcs.has_celestial:
+                raise ValueError("no valid celestial WCS")
+            child_mask = np.isfinite(child_data) & (child_data != 0)
+            levels = contour_levels(child_data, child_mask)
+            if not levels:
+                raise ValueError("no finite, varying contour values")
+        except Exception as error:
+            print(
+                "WARNING: Skipping trial H I component "
+                f"{component_id or 'unknown'} in the debug overlay: "
+                f"{type(error).__name__}: {error}"
+            )
+            continue
+
+        usable_component = dict(component)
+        usable_component.update(
+            {
+                "id": component_id,
+                "data": child_data,
+                "mask": child_mask,
+                "levels": levels,
+                "wcs": child_wcs,
+                "colour": colours[component_id],
+            }
+        )
+        usable_components.append(usable_component)
+
+    if not usable_components:
+        raise ValueError("No usable trial H I child moment-0 maps were found.")
+
+    plotted_positions = _positions_inside_image(
+        catalogue_positions, optical_wcs, optical_data.shape
+    )
+    figure = plt.figure(figsize=(8, 8))
+    axes = figure.add_subplot(111, projection=optical_wcs)
+    lower, upper = _display_limits(optical_data)
+    axes.imshow(
+        optical_data,
+        origin="lower",
+        cmap="gray",
+        vmin=lower,
+        vmax=upper,
+        interpolation="nearest",
+    )
+
+    parent_transform = axes.get_transform(parent_wcs)
+    footprint = np.ma.masked_where(
+        ~parent_mask, np.ones(parent_mask.shape, dtype=float)
+    )
+    axes.imshow(
+        footprint,
+        origin="lower",
+        cmap=ListedColormap([PURPLE]),
+        alpha=0.40,
+        interpolation="nearest",
+        transform=parent_transform,
+    )
+    parent_levels = contour_levels(parent_data, parent_mask)
+    if parent_levels:
+        axes.contour(
+            np.ma.masked_where(~parent_mask, parent_data),
+            levels=parent_levels,
+            colors=CONTOUR_PURPLE,
+            linewidths=0.8,
+            alpha=0.55,
+            origin="lower",
+            transform=parent_transform,
+        )
+
+    detected_markers = np.ma.asarray(marker_data).filled(0)
+    optical_centroids = marker_centroids(detected_markers)
+    if optical_centroids:
+        for _, _, marker_label in optical_centroids:
+            axes.contour(
+                detected_markers == marker_label,
+                levels=[0.5],
+                colors=OPTICAL_MARKER_COLOUR,
+                linewidths=1.0,
+                alpha=0.65,
+                origin="lower",
+            )
+        axes.scatter(
+            [centroid[0] for centroid in optical_centroids],
+            [centroid[1] for centroid in optical_centroids],
+            marker="x",
+            s=70,
+            linewidths=1.8,
+            color=OPTICAL_MARKER_COLOUR,
+            zorder=5,
+        )
+
+    world_transform = axes.get_transform("world")
+    for position in plotted_positions:
+        coordinate = SkyCoord(
+            position["ra_deg"] * u.deg,
+            position["dec_deg"] * u.deg,
+            frame="icrs",
+        )
+        axes.scatter(
+            coordinate.ra.deg,
+            coordinate.dec.deg,
+            transform=world_transform,
+            marker="o",
+            s=70,
+            color=CATALOGUE_COLOUR,
+            edgecolor="#191919",
+            linewidth=0.8,
+            zorder=7,
+        )
+        axes.annotate(
+            position["name"],
+            (coordinate.ra.deg, coordinate.dec.deg),
+            xycoords=world_transform,
+            xytext=(6, 6),
+            textcoords="offset points",
+            fontsize=7,
+            color=CATALOGUE_COLOUR,
+            bbox={
+                "boxstyle": "round,pad=0.2",
+                "facecolor": "#191919",
+                "edgecolor": "none",
+                "alpha": 0.65,
+            },
+            zorder=8,
+        )
+
+    component_legend_items = []
+    plotted_centres = 0
+    for component in usable_components:
+        axes.contour(
+            np.ma.masked_where(~component["mask"], component["data"]),
+            levels=component["levels"],
+            colors=component["colour"],
+            linewidths=1.35,
+            alpha=0.95,
+            origin="lower",
+            transform=axes.get_transform(component["wcs"]),
+            zorder=6,
+        )
+        component_legend_items.append(
+            Line2D(
+                [0],
+                [0],
+                color=component["colour"],
+                linewidth=1.5,
+                marker="o",
+                markerfacecolor=component["colour"],
+                markeredgecolor="#191919",
+                markersize=6,
+                label=f"H I child {component['id']}",
+            )
+        )
+
+        try:
+            centre = SkyCoord(
+                float(component["ra_deg"]) * u.deg,
+                float(component["dec_deg"]) * u.deg,
+                frame="icrs",
+            )
+            x_centre, y_centre = optical_wcs.world_to_pixel(centre)
+            centre_is_inside = (
+                np.isfinite(x_centre)
+                and np.isfinite(y_centre)
+                and -0.5 <= x_centre < optical_data.shape[1] - 0.5
+                and -0.5 <= y_centre < optical_data.shape[0] - 0.5
+            )
+        except (TypeError, ValueError):
+            centre_is_inside = False
+
+        if not centre_is_inside:
+            print(
+                "WARNING: Trial H I component "
+                f"{component['id']} has no valid centre inside the optical "
+                "cutout; its contours will still be plotted."
+            )
+            continue
+
+        axes.scatter(
+            centre.ra.deg,
+            centre.dec.deg,
+            transform=world_transform,
+            marker="o",
+            s=62,
+            color=component["colour"],
+            edgecolor="#191919",
+            linewidth=1.0,
+            zorder=9,
+        )
+        axes.annotate(
+            f"H I {component['id']}",
+            (centre.ra.deg, centre.dec.deg),
+            xycoords=world_transform,
+            xytext=(6, -10),
+            textcoords="offset points",
+            fontsize=7,
+            color=component["colour"],
+            bbox={
+                "boxstyle": "round,pad=0.18",
+                "facecolor": "#191919",
+                "edgecolor": "none",
+                "alpha": 0.68,
+            },
+            zorder=10,
+        )
+        plotted_centres += 1
+
+    axes.coords[0].set_axislabel("Right Ascension")
+    axes.coords[1].set_axislabel("Declination")
+    axes.coords.grid(color="white", alpha=0.18, linestyle=":")
+    axes.set_title(
+        f"SoFiA source {source_id}: raw candidate H I component QA\n"
+        f"{len(usable_components)} candidate component(s), "
+        f"{plotted_centres} measured centre(s)"
+    )
+    legend_items = [
+        Patch(facecolor=PURPLE, alpha=0.40, label="Parent H I footprint"),
+        Line2D(
+            [0],
+            [0],
+            color=CONTOUR_PURPLE,
+            linewidth=1.0,
+            label="Parent H I moment-0",
+        ),
+    ]
+    if optical_centroids:
+        legend_items.append(
+            Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="none",
+                markeredgecolor=OPTICAL_MARKER_COLOUR,
+                markeredgewidth=1.8,
+                markersize=7,
+                label="Detected optical source",
+            )
+        )
+    if plotted_positions:
+        legend_items.append(
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                color="none",
+                markerfacecolor=CATALOGUE_COLOUR,
+                markeredgecolor="#191919",
+                markersize=7,
+                label="Catalogue position",
+            )
+        )
+    legend_items.extend(component_legend_items)
+    axes.set_xlim(-0.5, optical_data.shape[1] - 0.5)
+    axes.set_ylim(-0.5, optical_data.shape[0] - 0.5)
+    axes.legend(
+        handles=legend_items,
+        loc="upper right",
+        fontsize=7,
+        ncol=2 if len(legend_items) > 7 else 1,
+    )
+
+    output_path = Path(output_name)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(figure)
+    return output_path
+
+
+def write_hi_component_debug_overlay_safely(**kwargs):
+    """Write raw trial-child QA without allowing plotting to stop a run."""
+    components = kwargs.get("components") or []
+    if not components:
+        return None
+    try:
+        output_path = write_hi_component_debug_overlay(**kwargs)
+        print(f"Wrote raw trial H I component debug overlay to {output_path}.")
+        return output_path
+    except Exception as error:
+        try:
+            from matplotlib import pyplot as plt
+
+            plt.close("all")
+        except Exception:
+            pass
+        source_id = kwargs.get("source_id", "unknown")
+        print(
+            "WARNING: Could not create the raw trial H I component debug "
             f"overlay for SoFiA source {source_id}: "
             f"{type(error).__name__}: {error}"
         )
