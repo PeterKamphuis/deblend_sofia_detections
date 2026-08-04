@@ -329,6 +329,7 @@ def write_source_debug_overlay(
     output_name,
     catalogue_output_name,
     source_id,
+    marker_mode="automatic + manual catalogue",
 ):
     """Write the optical/H I/catalogue QA PNG and its plotted-position table."""
     import matplotlib
@@ -492,7 +493,8 @@ def write_source_debug_overlay(
     axes.set_title(
         f"SoFiA source {source_id}: optical / H I / catalogue QA\n"
         f"{len(centroids)} optical detection(s), "
-        f"{len(plotted_positions)} catalogue position(s)"
+        f"{len(plotted_positions)} catalogue position(s)\n"
+        f"Watershed markers: {marker_mode}"
     )
     legend_items = [
         Patch(facecolor=PURPLE, alpha=0.40, label="H I source footprint"),
@@ -593,6 +595,7 @@ def write_hi_component_debug_overlay(
     components,
     output_name,
     source_id,
+    marker_mode="automatic + manual catalogue",
 ):
     """Write raw trial-child H I contours and centres on the optical QA view."""
     import matplotlib
@@ -866,7 +869,8 @@ def write_hi_component_debug_overlay(
     axes.set_title(
         f"SoFiA source {source_id}: raw candidate H I component QA\n"
         f"{len(usable_components)} candidate component(s), "
-        f"{plotted_centres} measured centre(s)"
+        f"{plotted_centres} measured centre(s)\n"
+        f"Watershed markers: {marker_mode}"
     )
     legend_items = [
         Patch(facecolor=PURPLE, alpha=0.40, label="Parent H I footprint"),

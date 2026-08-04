@@ -63,6 +63,18 @@ Input Keywords
   A list of input tables to use for the deblending process. To assist in matching detections to
   optical sources and setting the optical markers.  
 
+**manual_markers_only**:
+
+  *bool, optional, default = False*
+
+  If True, discard automatically detected optical regions before adding the
+  manual catalogue markers. Only manual catalogue positions overlapping the
+  parent H I mask can then seed the optical watershed. A manual input table is
+  required. Automatic detections remain visible as cyan diagnostics in the QA
+  PNG, and the image title identifies the manual-catalogue-only marker mode.
+  Yellow catalogue positions outside the parent H I footprint are diagnostic
+  only and do not become watershed markers.
+
 
 **original_tables**:
 

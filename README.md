@@ -399,6 +399,7 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `input.sofia_parameters` | `sofia_input.par` | Original `.par` file for the complete SoFiA run being deblended. |
 | `input.source_ids` | `[]` | Optional catalogue-ID allowlist. Empty means all IDs. Unknown IDs stop before source processing. |
 | `input.manual_input_tables` | `[null]` | Optional `.csv`, `.txt`, or compatible pickled counterpart tables. |
+| `input.manual_markers_only` | `false` | When `true`, only manual catalogue positions inside the parent H I mask seed optical watershed runs; automatic optical detections remain QA diagnostics. Requires a manual input table. |
 | `input.manual_optical_image` | `[null]` | Optional celestial-WCS optical FITS image. A 2-D image is used directly; multi-plane images are collapsed over non-celestial axes. Only the first image is currently used. |
 | `input.original_tables` | `false` | Reread supplied text tables instead of using cached pickle files. This is not a backup/safety option. |
 | `input.original_images` | `false` | Recreate cached optical products from the supplied image or SkyView. This is not a backup/safety option. |
@@ -541,8 +542,18 @@ Configure it with:
 input:
   manual_input_tables:
     - /data/cluster_deblend_trial/catalogues/counterparts.csv
+  # Optional: exclude automatic Photutils detections from watershed markers.
+  manual_markers_only: true
   original_tables: true
 ```
+
+With `manual_markers_only: true`, the manual table acts as the optical-marker
+allowlist. Every catalogue entry whose marker overlaps the parent H I footprint
+can seed the watershed; use a table containing only the counterparts intended
+for the selected blends. Automatic Photutils detections are still shown as cyan
+QA outlines and crosses, but they are not watershed seeds. Catalogue positions
+outside the parent H I footprint can still appear as yellow QA dots and are not
+used as markers. The QA image title reports the active watershed-marker mode.
 
 The important fields are:
 

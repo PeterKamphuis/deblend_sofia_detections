@@ -459,6 +459,7 @@ def split_sources(cfg_in,cube_name, mask,
                         "source_mask",
                         "marker_data",
                         "catalogue_positions",
+                        "marker_mode",
                         "source_id",
                     )
                 }

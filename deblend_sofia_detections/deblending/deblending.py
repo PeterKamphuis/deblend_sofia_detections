@@ -15,6 +15,8 @@ from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.failure_reporting import \
     SourceFailure,write_failure_report
 from deblend_sofia_detections.support.source_selection import select_source_ids
+from deblend_sofia_detections.support.marker_selection import \
+    catalogue_marker_base
 from astropy.convolution import convolve_fft
 from astropy.io import fits
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -744,6 +746,12 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
     return segments
 
 def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
+    if cfg.input.manual_markers_only and \
+            cfg.input.manual_input_tables[0] is None:
+        raise InputError(
+            "input.manual_markers_only=true requires at least one "
+            "manual input table."
+        )
     #If our mask is 3D we sum it to get the 2d mask
     if len(mask.shape) > 2:
         mask = np.nansum(mask, axis=0)
@@ -759,6 +767,11 @@ def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
     if not cfg.input.manual_input_tables[0] is None:
         if cfg.general.verbose:
             print("Adding the manual optical source table.")
+            if cfg.input.manual_markers_only:
+                print(
+                    "Manual-marker-only mode is enabled: automatic optical "
+                    "detections will not seed the watershed."
+                )
         source_table= read_manual_table(cfg)
         if diagnostics is not None:
             diagnostics['catalogue_positions'].extend(
@@ -766,7 +779,11 @@ def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
                     source_table, catalogue="Manual input"
                 )
             )
-        optical_markers = mask_source_from_table(cfg, detected_optical_markers,
+        marker_base = catalogue_marker_base(
+            detected_optical_markers,
+            manual_markers_only=cfg.input.manual_markers_only,
+        )
+        optical_markers = mask_source_from_table(cfg, marker_base,
             detected_optical_markers_header, src_table=source_table,
             mask= used_mask)   
     else:
@@ -868,6 +885,11 @@ def watershed_deblending(cfg_in, cube_name = None,
                     'detected_optical_markers', optical_markers
                 ),
                 'catalogue_positions': catalogue_positions,
+                'marker_mode': (
+                    "manual catalogue only"
+                    if cfg.input.manual_markers_only
+                    else "automatic + manual catalogue"
+                ),
                 'output_name': (
                     f"{outdir}debug_products/"
                     f"optical_hi_catalogue_overlay_source_{sofia_id}.png"
