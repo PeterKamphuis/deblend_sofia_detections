@@ -4,6 +4,14 @@ The  deblend-sofia-detections' yaml file documentation!
 Introduction 
 ----------------
 
+.. note::
+
+  This configuration reference documents this fork through ``v1.0.0``. It adds
+  settings that are not present in upstream ``v0.0.4``, notably
+  ``input.source_ids``, ``input.manual_markers_only``, and
+  ``general.continue_on_source_error``. See :doc:`Fork_Differences` before using
+  a configuration written for a different repository version.
+
 deblend-sofia-detections really only requires the sofia run input .par file 
 It should then automatically check all detections and download the necessary optical images.
 However there are a few more optional input parameters that can be specified in the .yml file to customize the behavior of the package.

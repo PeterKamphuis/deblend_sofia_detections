@@ -1,5 +1,106 @@
 # deblend-sofia-detections
 
+## Changes from PeterKamphuis/deblend_sofia_detections
+
+This repository is an enhanced fork of
+[`PeterKamphuis/deblend_sofia_detections`](https://github.com/PeterKamphuis/deblend_sofia_detections).
+It retains the upstream watershed-deblending method and SoFiA product layout, but
+adds operational controls, failure isolation, optical-input handling, and
+scientific QA products needed for controlled work on large fields.
+
+### Comparison scope
+
+This comparison is deliberately pinned to reproducible Git revisions:
+
+| Repository state | Revision | Meaning |
+| --- | --- | --- |
+| Upstream baseline | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Current upstream `main` baseline used by this fork. |
+| This fork | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Last committed fork release covered by this section. |
+
+The list below describes committed differences through `v1.0.0`. Work that has
+not yet been committed and tagged is intentionally excluded; add it here when it
+becomes part of a reproducible repository revision.
+
+### User-visible differences at a glance
+
+| Area | Upstream `v0.0.4` | This fork `v1.0.0` |
+| --- | --- | --- |
+| Source selection | Processes every catalogue source. | Adds `input.source_ids`, an optional validated allowlist for running only known candidate blends. |
+| Failure behavior | An uncaught source-level exception ends the field run. | Continues with later sources by default, records a traceback-rich failure report, and offers fail-fast behavior. |
+| Optical/catalogue QA | Primarily writes intermediate FITS masks and console diagnostics. | Adds per-source PNG overlays and ECSV records tying optical detections, catalogue positions, the parent H I footprint, moment-0 structure, and trial child components together. |
+| Manual optical FITS input | Assumes a directly usable 2-D image. | Accepts RGB and other multi-plane FITS data, identifies celestial axes from WCS, collapses non-celestial axes, and reports clearer input errors. |
+| Standalone optical conversion | No dedicated conversion utility. | Adds `scripts/convert_optical_fits_to_2d.py` with mean, median, or first-plane collapse modes and safe output handling. |
+| Marker control | Automatic optical detections and manual catalogue markers are combined. | Adds `input.manual_markers_only`, allowing a vetted catalogue to be the watershed-marker allowlist while retaining automatic detections for QA. |
+| Documentation and tests | Short installation and configuration notes. | Adds a full operational guide and regression tests for selection, failure reports, visual QA, optical-axis handling, conversion CLI behavior, and manual marker selection. |
+
+### Detailed behavior added by this fork
+
+1. **Targeted source-ID runs.** Set `input.source_ids` to quoted SoFiA catalogue
+   IDs such as `["42", "57"]`. The selection is validated before optical-image or
+   cubelet processing, follows catalogue order, and processes duplicate requested
+   IDs once. An empty list preserves the upstream all-source loop. If a selected
+   split is accepted, the final re-parameterisation still operates on the complete
+   field mask so unchanged detections remain in the field catalogue.
+
+2. **Source-level failure isolation.** The main catalogue loop catches an exception
+   from one cubelet and continues when `general.continue_on_source_error: true`,
+   which is the fork default. Each run rewrites
+   `Watershed_Output/deblend_failures.log` with requested, successful, and failed
+   counts plus the source ID, cubelet path, exception type, reason, and traceback.
+   Set the option to `false` to recover fail-fast behavior.
+
+3. **Two complementary QA overlays.** With `general.debug: true`,
+   `optical_hi_catalogue_overlay_source_<ID>.png` shows the optical background,
+   original H I footprint, moment-0 contours, automatic optical detections, and
+   catalogue positions. `catalogue_positions_source_<ID>.ecsv` records the plotted
+   catalogue coordinates. After trial SoFiA parameterisation,
+   `optical_hi_components_overlay_source_<ID>.png` adds separately coloured child
+   masks and their measured positions. Plotting failures are warnings and do not
+   abort scientific processing.
+
+4. **Robust multi-dimensional optical FITS handling.** Manual images are inspected
+   using their WCS. The code maps the celestial pixel axes to NumPy axes, averages
+   all other axes to produce a 2-D image, retains celestial WCS information, and
+   raises focused errors for missing image data, unusable celestial WCS, or absent
+   sky overlap. The standalone converter supports explicit HDU selection,
+   `mean`/`median`/`first` collapse methods, overwrite protection, float32 output,
+   provenance in FITS `HISTORY`, and post-write dimensionality verification.
+
+5. **Manual-catalogue-only watershed markers.** When
+   `input.manual_markers_only: true`, automatic Photutils regions do not seed the
+   optical watershed. Only manual catalogue markers that overlap the parent H I
+   mask are used. Automatic regions remain visible in cyan in the QA plot, and the
+   plot title records the active marker mode. The option requires a manual input
+   table and defaults to `false` for compatibility.
+
+6. **Beginner and operations documentation.** The fork explains the cube-mask-
+   catalogue relationship, the optical and peak watershed routes, the exact SoFiA
+   products required, copied-workspace safety, selected-source and whole-field
+   workflows, parameter meanings, output interpretation, scientific validation,
+   and troubleshooting. Focused unit tests cover each fork-specific helper and QA
+   path.
+
+### What remains the same
+
+The core scientific intent is unchanged: the program starts from an existing
+SoFiA detection, proposes integer child labels inside the parent mask, asks SoFiA
+to measure those labels, checks counterparts, updates the master mask when a split
+survives, and finally re-parameterises the full field. The fork does not make
+deblending scientifically automatic, does not discover unmasked H I emission, and
+does not make the workflow non-destructive. The copied-workspace warning below
+applies equally to upstream and fork versions.
+
+For the same behavior as upstream on the new controls, leave `input.source_ids`
+empty and `input.manual_markers_only` false. Set
+`general.continue_on_source_error: false` if the run must stop at the first
+source-level exception. Debug overlays are only created when `general.debug` is
+enabled.
+
+The corresponding documentation page is
+[Changes from upstream](docs/source/Fork_Differences.rst).
+
+## Package overview
+
 `deblend-sofia-detections` is a post-processing tool for H I source detections
 created by [SoFiA-2](https://gitlab.com/SoFiA-Admin/SoFiA-2). It is designed for
 the case where SoFiA has labelled emission from two or more galaxies as one
