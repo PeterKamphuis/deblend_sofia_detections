@@ -22,12 +22,12 @@ The notes are pinned to reproducible Git revisions:
 | Project state | Revision | Role in this documentation |
 | --- | --- | --- |
 | Peter Kamphuis's original project | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Foundation and reference revision from which this fork developed. |
-| This fork's last tagged release | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Tagged baseline containing selected-source controls, failure reporting, optical QA, multi-plane FITS support, and manual-only markers. |
-| This fork's current documented implementation | [`44532f9`](https://github.com/3rico/deblend_sofia_detections/commit/44532f9) | Post-`v1.0.0` implementation adding automatic DR10 counterparts, optional moment-0 support filtering, targeted optical-region deblending, and Gaia-mask diagnostics. |
+| This fork's previous tagged release | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Tagged baseline containing selected-source controls, failure reporting, optical QA, multi-plane FITS support, and manual-only markers. |
+| This fork's current release | [`v1.1.0`](https://github.com/3rico/deblend_sofia_detections/tree/v1.1.0) | Adds automatic DR10 counterparts, optional moment-0 support filtering, targeted optical-region deblending, Gaia-mask diagnostics, and corrected fork-maintainer metadata. |
 
-Only committed additions through `44532f9` are described. Because those latest
-features are newer than the `v1.0.0` tag, scientific analyses using them should
-record and cite the full Git commit until a later release is tagged.
+Only committed additions included in `v1.1.0` are described. Scientific analyses
+should record and cite this release tag, together with the configuration and
+scientific inputs used for the run.
 
 ### Additions maintained in this fork
 
@@ -1063,8 +1063,8 @@ then expand to the complete catalogue.
 Thank you for giving scientific credit to the people whose work made this package
 possible. If this fork contributes to a paper, please cite:
 
-1. **The exact version of this fork used in the analysis.** For `v1.0.0`:
-   Maina, E. (2026), *deblend-sofia-detections*, Version 1.0.0 [Computer
+1. **The exact version of this fork used in the analysis.** For `v1.1.0`:
+   Maina, E. (2026), *deblend-sofia-detections*, Version 1.1.0 [Computer
    software], https://github.com/3rico/deblend_sofia_detections.
 2. **Peter Kamphuis's original package**, which provided the software foundation:
    Kamphuis, P. (2026), *deblend_sofia_detections*, Version 0.0.4 [Computer
@@ -1075,22 +1075,19 @@ possible. If this fork contributes to a paper, please cite:
    *The Astrophysical Journal*, 980, 157,
    https://doi.org/10.3847/1538-4357/ad9579.
 
-The automatic DR10 counterpart path, optional moment-0 support filter, targeted
-optical-region deblending, and per-source Gaia-mask diagnostics were introduced
-after `v1.0.0`. The documented implementation containing all of them is commit
-`44532f95bab9d7259a4f081666139907853a7f4b`. Until those features appear in a
-tagged release, cite that full commit hash instead of describing the analysis as
-using unmodified `v1.0.0`.
+Version `v1.1.0` includes the automatic DR10 counterpart path, optional moment-0
+support filter, targeted optical-region deblending, and per-source Gaia-mask
+diagnostics. Cite `v1.1.0` when any of these paths contributes to the analysis.
 
 Suggested methods wording:
 
-> H I detections were deblended with `deblend-sofia-detections` v1.0.0
+> H I detections were deblended with `deblend-sofia-detections` v1.1.0
 > (Maina 2026), a fork of Peter Kamphuis's `deblend_sofia_detections` v0.0.4
 > (Kamphuis 2026), using the watershed-deblending approach described by Huang et
 > al. (2025).
 
-Replace `v1.0.0` with the full Git commit when the analysis uses post-release
-functionality.
+Replace `v1.1.0` with the exact later release or full Git commit if another
+version is used.
 
 Suggested acknowledgement:
 

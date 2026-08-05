@@ -31,25 +31,23 @@ The notes are intentionally pinned to exact committed states:
 
 * Peter Kamphuis's original project at release ``v0.0.4``, commit
   `a6daef3 <https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3>`_;
-* this fork's last tagged release, ``v1.0.0``, commit
+* this fork's previous tagged release, ``v1.0.0``, commit
   `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_;
-* the current documented post-release implementation, commit
-  `44532f9 <https://github.com/3rico/deblend_sofia_detections/commit/44532f9>`_.
+* the current release,
+  `v1.1.0 <https://github.com/3rico/deblend_sofia_detections/tree/v1.1.0>`_.
 
-Only committed additions through ``44532f9`` are described. The automatic DR10,
-targeted optical-region deblending, and Gaia-diagnostic additions are newer than
-the ``v1.0.0`` tag. Until they are included in a later release, scientific users
-should record and cite the full Git commit rather than identifying those runs as
-unmodified ``v1.0.0``.
+Only committed additions included in ``v1.1.0`` are described. Scientific users
+should record and cite this release tag, or the full Git commit when using a later
+untagged checkout.
 
 The fork retains the original project's watershed method, SoFiA input-product
 conventions, counterpart-based filtering, master-mask update, and final field
 re-parameterisation. Its additions concentrate on controlling which sources run,
 recording source-level failures, handling multi-plane optical FITS products, and
-making proposed splits easier to audit scientifically. Post-``v1.0.0`` additions
-also provide opt-in Legacy Surveys DR10 positional counterparts, optional H I
-support filtering for those markers, targeted optical-region deblending, and
-explicit Gaia-mask provenance products.
+making proposed splits easier to audit scientifically. Version ``v1.1.0`` also
+provides opt-in Legacy Surveys DR10 positional counterparts, optional H I support
+filtering for those markers, targeted optical-region deblending, and explicit
+Gaia-mask provenance products.
 
 Summary of additions maintained in this fork
 --------------------------------------------
@@ -238,7 +236,7 @@ or owns the detected gas.
 7. Optionally require parent moment-0 support for DR10 markers
 --------------------------------------------------------------
 
-The post-release setting::
+The ``v1.1.0`` setting::
 
   input:
     filter_dr10_markers_by_moment0_peaks: true
@@ -384,3 +382,5 @@ Fork addition history
 * ``44532f9`` — opt-in Photutils deblending restricted to optical regions with
   multiple mapped moment-0 peaks, peak-map reuse, before/after segmentation
   diagnostics, parameter validation, and focused regression tests.
+* ``v1.1.0`` — packages the documented DR10, targeted optical-deblending, and
+  Gaia-diagnostic workflow with corrected release and maintainer metadata.

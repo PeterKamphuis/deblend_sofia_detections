@@ -29,17 +29,14 @@ If this fork contributes to a published analysis, please include all three of th
 following references:
 
 #. **The exact release of this fork that was used.** Cite the version or commit so
-   readers can reproduce the software environment. For release ``v1.0.0``:
+   readers can reproduce the software environment. For release ``v1.1.0``:
 
-   Maina, E. (2026). *deblend-sofia-detections* (Version 1.0.0) [Computer
+   Maina, E. (2026). *deblend-sofia-detections* (Version 1.1.0) [Computer
    software]. https://github.com/3rico/deblend_sofia_detections
 
-   The automatic DR10 counterpart path, optional moment-0 support filter,
-   targeted optical-region deblending, and per-source Gaia-mask diagnostics were
-   introduced after ``v1.0.0``. The documented implementation containing all of
-   them is commit ``44532f95bab9d7259a4f081666139907853a7f4b``. Until a later
-   release contains them, cite that full commit hash rather than identifying such
-   an analysis as unmodified ``v1.0.0``.
+   Version ``v1.1.0`` includes the automatic DR10 counterpart path, optional
+   moment-0 support filter, targeted optical-region deblending, and per-source
+   Gaia-mask diagnostics.
 
 #. **Peter Kamphuis's original package.** This acknowledges the software
    foundation from which the fork developed:
@@ -65,13 +62,13 @@ Suggested wording
 
 A methods section could say:
 
-   H I detections were deblended with ``deblend-sofia-detections`` v1.0.0
+   H I detections were deblended with ``deblend-sofia-detections`` v1.1.0
    (Maina 2026), a fork of Peter Kamphuis's ``deblend_sofia_detections`` v0.0.4
    (Kamphuis 2026), using the watershed-deblending approach described by Huang et
    al. (2025).
 
-Replace ``v1.0.0`` with the full Git commit when post-release functionality was
-used.
+Replace ``v1.1.0`` with the exact later release or full Git commit if another
+version was used.
 
 An acknowledgements section may additionally say:
 
@@ -89,22 +86,13 @@ the target journal's conventions:
 
 .. code-block:: bibtex
 
-   @software{maina_deblend_sofia_detections_2026,
+   @software{maina_deblend_sofia_detections_1_1_0_2026,
      author  = {Maina, Eric},
      title   = {deblend-sofia-detections},
-     version = {1.0.0},
+     version = {1.1.0},
      year    = {2026},
      url     = {https://github.com/3rico/deblend_sofia_detections},
      note    = {Computer software}
-   }
-
-   @software{maina_deblend_sofia_detections_44532f9_2026,
-     author  = {Maina, Eric},
-     title   = {deblend-sofia-detections},
-     version = {Git commit 44532f95bab9d7259a4f081666139907853a7f4b},
-     year    = {2026},
-     url     = {https://github.com/3rico/deblend_sofia_detections/tree/44532f95bab9d7259a4f081666139907853a7f4b},
-     note    = {Computer software; post-v1.0.0 DR10, targeted optical-deblending, and Gaia-diagnostic implementation}
    }
 
    @software{kamphuis_deblend_sofia_detections_2026,

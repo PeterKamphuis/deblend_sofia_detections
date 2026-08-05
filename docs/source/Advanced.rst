@@ -8,10 +8,10 @@ Introduction
 
   We thank Peter Kamphuis for creating and openly sharing the original package on
   which this fork is based. This configuration reference covers the committed
-  implementation through ``44532f9``. The automatic DR10, targeted optical-
-  region deblending, and Gaia-diagnostic features are newer than the ``v1.0.0``
-  tag. See :doc:`Fork_Differences` for the version-pinned lineage and record the
-  full commit when using post-release settings scientifically.
+  ``v1.1.0`` implementation, including automatic DR10 counterparts, targeted
+  optical-region deblending, and Gaia-mask diagnostics. See
+  :doc:`Fork_Differences` for the version-pinned lineage and record the exact
+  release or commit used for scientific work.
 
 The minimum deblender configuration identifies the parameter file from the
 complete SoFiA run. That file locates the original cube and SoFiA output products;

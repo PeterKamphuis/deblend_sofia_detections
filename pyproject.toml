@@ -12,6 +12,9 @@ requires-python = ">=3.11"
 authors = [
     { name = "P. Kamphuis", email = "peterkamphuisastronomy@gmail.com" },
 ]
+maintainers = [
+    { name = "Eric Maina" },
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
@@ -48,5 +51,4 @@ include = [
     "/deblend_sofia_detections",
     "/deblend_sofia_detections/deblend_sofia_detections/template/*.par",
 ]
-
 

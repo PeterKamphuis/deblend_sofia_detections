@@ -5,9 +5,8 @@ message: >-
   Huang et al. (2025), as described in the README and documentation.
 title: deblend-sofia-detections
 type: software
-version: 1.0.0
-date-released: 2026-08-04
-commit: d78fa1b6ebf9d994044923d5b064df3cccf67b5d
+version: 1.1.0
+date-released: 2026-08-05
 authors:
   - family-names: Maina
     given-names: Eric
