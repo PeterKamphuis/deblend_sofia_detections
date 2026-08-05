@@ -58,6 +58,10 @@ class General:
     optical_pixel_scale: float = 5. # Amount of optical pixels that should cover a beam
     counterpart_region: str = 'Ellipse' 
     debug: bool = False
+    # Write the additional RA-velocity and Dec-velocity QA projections.  This
+    # is opt-in because four extra PNGs per source can be costly for full-field
+    # runs.  It only has an effect when debug is also True.
+    debug_pv_plots: bool = False
 @dataclass
 
 class Directories:

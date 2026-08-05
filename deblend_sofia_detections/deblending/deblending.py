@@ -11,7 +11,8 @@ from deblend_sofia_detections.deblending.image_manipulation import\
     mask_source_from_table,add_to_original
 from deblend_sofia_detections.deblending.peak_handling import find_peaks
 from deblend_sofia_detections.deblending.debug_visualization import \
-    catalogue_positions_from_table,write_source_debug_overlay_safely
+    catalogue_positions_from_table,write_source_debug_overlay_safely,\
+    write_source_pv_debug_overlays_safely
 from deblend_sofia_detections.deblending.sofia_functions import read_sofia_table,\
     obtain_sofia_id, rerun_sofia
 from deblend_sofia_detections.support.system_functions import create_directory,join_path
@@ -1316,6 +1317,7 @@ def watershed_deblending(cfg_in, cube_name = None,
                 'optical_cube': [False, 0],
                 'hi_peaks': [False, 0]}
     debug_overlay = None
+    pv_debug_overlay = None
     catalogue_positions = []
     if optical_deblending:
         # If we do deblending based on optical image
@@ -1362,6 +1364,34 @@ def watershed_deblending(cfg_in, cube_name = None,
             # Write this once before watershed so a later source-level failure
             # does not remove the most useful optical diagnostic.
             write_source_debug_overlay_safely(**debug_overlay)
+            if getattr(cfg.general, 'debug_pv_plots', False):
+                pv_debug_overlay = {
+                    'cube_data': cube[0].data,
+                    'cube_header': cube[0].header,
+                    'source_mask': mask[0].data,
+                    'optical_image_name': cfg.internal.cleaned_optical_background,
+                    'marker_data': marker_diagnostics.get(
+                        'detected_optical_markers', optical_markers
+                    ),
+                    'catalogue_positions': catalogue_positions,
+                    'marker_mode': marker_diagnostics.get(
+                        'marker_mode', "automatic optical detections"
+                    ),
+                    'output_ra_name': (
+                        f"{outdir}debug_products/"
+                        "optical_hi_catalogue_pv_ra_velocity_source_"
+                        f"{sofia_id}.png"
+                    ),
+                    'output_dec_name': (
+                        f"{outdir}debug_products/"
+                        "optical_hi_catalogue_pv_dec_velocity_source_"
+                        f"{sofia_id}.png"
+                    ),
+                    'source_id': sofia_id,
+                }
+                write_source_pv_debug_overlays_safely(
+                    **pv_debug_overlay
+                )
         # If we have only one marker or less we do not want to deblend based on the 
         # optical image because it is not useful and can lead to oversegmentation
         if len(np.unique(optical_markers.data)) - 1 <= 1:
@@ -1428,12 +1458,16 @@ def watershed_deblending(cfg_in, cube_name = None,
                 'automatic_counterpart_table'
             ) if optical_deblending else None,
             debug_overlay=debug_overlay,
+            pv_debug_overlay=pv_debug_overlay,
         )  # skip the background
         if debug_overlay is not None:
             # Counterpart matching happens in split_sources. Rewrite the same
             # plot so accepted manual/DR10/NED matches appear as yellow points.
             debug_overlay['catalogue_positions'] = catalogue_positions
             write_source_debug_overlay_safely(**debug_overlay)
+        if pv_debug_overlay is not None:
+            pv_debug_overlay['catalogue_positions'] = catalogue_positions
+            write_source_pv_debug_overlays_safely(**pv_debug_overlay)
         # If we are running as a larger sofia run update the catalogue and cubelets
         if stil_split:
             max_source_id =create_final_mask(cfg, input_mask_name=final_mask_name,

@@ -13,10 +13,13 @@ from deblend_sofia_detections.deblending.debug_visualization import (
     deduplicate_positions,
     marker_centroids,
     matched_counterpart_positions,
+    pv_projection_data,
     trial_hi_components_from_table,
     write_hi_component_debug_overlay,
     write_hi_component_debug_overlay_safely,
+    write_hi_component_pv_debug_overlays,
     write_source_debug_overlay_safely,
+    write_source_pv_debug_overlays,
 )
 
 
@@ -32,6 +35,19 @@ class FakeTable(list):
 
 
 class DebugVisualizationTests(unittest.TestCase):
+    @staticmethod
+    def make_cube_wcs(width=20, height=16, channels=12):
+        from astropy.wcs import WCS
+
+        wcs = WCS(naxis=3)
+        wcs.wcs.crpix = [width / 2.0, height / 2.0, 1.0]
+        wcs.wcs.cdelt = np.array([-0.001, 0.001, 20000.0])
+        wcs.wcs.crval = [10.0, -20.0, 10000000.0]
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN", "VRAD"]
+        wcs.wcs.cunit = ["deg", "deg", "m/s"]
+        header = wcs.to_header()
+        return wcs, header
+
     def test_marker_centroids_are_reported_for_each_positive_label(self):
         markers = np.array(
             [
@@ -55,6 +71,43 @@ class DebugVisualizationTests(unittest.TestCase):
         self.assertEqual(len(levels), 3)
         self.assertTrue(all(1.0 < level < 4.0 for level in levels))
         self.assertEqual(levels, sorted(levels))
+
+    def test_pv_projection_shapes_and_velocity_units(self):
+        _, header = self.make_cube_wcs(width=10, height=8, channels=6)
+        cube = np.arange(6 * 8 * 10, dtype=float).reshape(6, 8, 10)
+        mask = np.zeros_like(cube, dtype=int)
+        mask[1:5, 2:7, 3:9] = 1
+
+        ra_projection = pv_projection_data(cube, header, mask, "ra")
+        dec_projection = pv_projection_data(cube, header, mask, "dec")
+
+        self.assertEqual(ra_projection["background"].shape, (6, 10))
+        self.assertEqual(ra_projection["source"].shape, (6, 10))
+        self.assertEqual(dec_projection["background"].shape, (6, 8))
+        self.assertEqual(dec_projection["source"].shape, (6, 8))
+        self.assertAlmostEqual(ra_projection["velocity_kms"][0], 10000.0)
+        self.assertAlmostEqual(ra_projection["velocity_kms"][1], 10020.0)
+        self.assertFalse(bool(ra_projection["support"][0, 4]))
+        self.assertTrue(bool(ra_projection["support"][2, 4]))
+
+    def test_frequency_pv_axis_uses_rest_frequency_for_radio_velocity(self):
+        from astropy.wcs import WCS
+
+        rest_frequency = 1.420405751e9
+        wcs = WCS(naxis=3)
+        wcs.wcs.crpix = [3.0, 3.0, 1.0]
+        wcs.wcs.cdelt = np.array([-0.001, 0.001, -100000.0])
+        wcs.wcs.crval = [10.0, -20.0, rest_frequency]
+        wcs.wcs.ctype = ["RA---TAN", "DEC--TAN", "FREQ"]
+        wcs.wcs.cunit = ["deg", "deg", "Hz"]
+        header = wcs.to_header()
+        header["RESTFRQ"] = rest_frequency
+        cube = np.ones((4, 6, 6), dtype=float)
+
+        projection = pv_projection_data(cube, header, cube > 0, "ra")
+
+        self.assertAlmostEqual(projection["velocity_kms"][0], 0.0)
+        self.assertTrue(np.all(np.diff(projection["velocity_kms"]) > 0))
 
     def test_component_colours_follow_sorted_ids_and_are_distinct(self):
         colours = component_colour_mapping(["10", 2, "1"])
@@ -171,6 +224,90 @@ class DebugVisualizationTests(unittest.TestCase):
         )
 
         self.assertIsNone(result)
+
+    def test_catalogue_and_component_pv_overlays_render_both_axes(self):
+        from astropy.io import fits
+
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            cube_wcs, cube_header = self.make_cube_wcs()
+            channels, height, width = 12, 16, 20
+            zz, yy, xx = np.indices((channels, height, width))
+            cube = np.exp(
+                -(
+                    (xx - 9.0) ** 2 / 15.0
+                    + (yy - 8.0) ** 2 / 10.0
+                    + (zz - 5.0) ** 2 / 5.0
+                )
+            )
+            mask = (cube > 0.08).astype(np.int16)
+            optical_header = cube_wcs.celestial.to_header()
+            optical_name = directory / "optical.fits"
+            fits.PrimaryHDU(
+                np.sum(cube, axis=0), header=optical_header
+            ).writeto(optical_name)
+            markers = np.zeros((height, width), dtype=int)
+            markers[4:12, 5:14] = 1
+            ra_deg, dec_deg = cube_wcs.celestial.pixel_to_world_values(9, 8)
+            positions = [
+                {
+                    "ra_deg": ra_deg,
+                    "dec_deg": dec_deg,
+                    "name": "LS_TEST",
+                    "catalogue": "Legacy Surveys DR10",
+                    "marker_status": "accepted",
+                }
+            ]
+
+            catalogue_ra = directory / "catalogue_ra.png"
+            catalogue_dec = directory / "catalogue_dec.png"
+            catalogue_paths = write_source_pv_debug_overlays(
+                cube_data=cube,
+                cube_header=cube_header,
+                source_mask=mask,
+                optical_image_name=optical_name,
+                marker_data=markers,
+                catalogue_positions=positions,
+                output_ra_name=catalogue_ra,
+                output_dec_name=catalogue_dec,
+                source_id="36",
+            )
+
+            child_cube_name = directory / "child_cube.fits"
+            child_mask_name = directory / "child_mask.fits"
+            fits.PrimaryHDU(cube, header=cube_header).writeto(child_cube_name)
+            fits.PrimaryHDU(mask, header=cube_header).writeto(child_mask_name)
+            component_ra = directory / "component_ra.png"
+            component_dec = directory / "component_dec.png"
+            component_paths = write_hi_component_pv_debug_overlays(
+                cube_data=cube,
+                cube_header=cube_header,
+                source_mask=mask,
+                optical_image_name=optical_name,
+                marker_data=markers,
+                catalogue_positions=positions,
+                components=[
+                    {
+                        "id": "1",
+                        "cube_name": str(child_cube_name),
+                        "mask_name": str(child_mask_name),
+                        "ra_deg": ra_deg,
+                        "dec_deg": dec_deg,
+                        "velocity_kms": 10100.0,
+                    }
+                ],
+                output_ra_name=component_ra,
+                output_dec_name=component_dec,
+                source_id="36",
+            )
+
+            self.assertEqual(catalogue_paths, (catalogue_ra, catalogue_dec))
+            self.assertEqual(component_paths, (component_ra, component_dec))
+            for output_name in (
+                catalogue_ra, catalogue_dec, component_ra, component_dec
+            ):
+                self.assertTrue(output_name.is_file())
+                self.assertGreater(output_name.stat().st_size, 0)
 
     def test_source_overlay_renders_accepted_and_rejected_dr10_positions(self):
         from astropy.io import fits

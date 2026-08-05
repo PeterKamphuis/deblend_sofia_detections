@@ -67,7 +67,7 @@ def component_colour_mapping(component_ids):
 
 
 def trial_hi_components_from_table(table, cubelet_directory, basename):
-    """Describe trial SoFiA children and their moment-0 products."""
+    """Describe trial SoFiA children and their moment-0/cube products."""
     if table is None or not hasattr(table, "colnames"):
         return []
     id_column = _column_name(table, "id")
@@ -80,6 +80,19 @@ def trial_hi_components_from_table(table, cubelet_directory, basename):
 
     ra_column = _column_name(table, "ra")
     dec_column = _column_name(table, "dec")
+    velocity_column = next(
+        (
+            _column_name(table, name)
+            for name in ("v_sofia", "v_rad", "v_opt", "v_app")
+            if _column_name(table, name) is not None
+        ),
+        None,
+    )
+    velocity_unit = (
+        getattr(table[velocity_column], "unit", None)
+        if velocity_column is not None
+        else None
+    )
     components = []
     for row in table:
         component_id = _normalise_component_id(row[id_column])
@@ -88,6 +101,14 @@ def trial_hi_components_from_table(table, cubelet_directory, basename):
         moment0_name = (
             Path(cubelet_directory)
             / f"{basename}_{component_id}_mom0.fits"
+        )
+        cube_name = (
+            Path(cubelet_directory)
+            / f"{basename}_{component_id}_cube.fits"
+        )
+        mask_name = (
+            Path(cubelet_directory)
+            / f"{basename}_{component_id}_mask.fits"
         )
         if not moment0_name.is_file():
             print(
@@ -98,18 +119,29 @@ def trial_hi_components_from_table(table, cubelet_directory, basename):
 
         ra_deg = float("nan")
         dec_deg = float("nan")
+        velocity_kms = float("nan")
         if ra_column is not None and dec_column is not None:
             try:
                 ra_deg = _coordinate_in_degrees(row[ra_column])
                 dec_deg = _coordinate_in_degrees(row[dec_column])
             except (TypeError, ValueError):
                 pass
+        if velocity_column is not None:
+            try:
+                velocity_kms = _velocity_in_kms(
+                    row[velocity_column], velocity_unit
+                )
+            except (TypeError, ValueError):
+                pass
         components.append(
             {
                 "id": component_id,
                 "moment0_name": str(moment0_name),
+                "cube_name": str(cube_name) if cube_name.is_file() else None,
+                "mask_name": str(mask_name) if mask_name.is_file() else None,
                 "ra_deg": ra_deg,
                 "dec_deg": dec_deg,
+                "velocity_kms": velocity_kms,
             }
         )
 
@@ -328,6 +360,670 @@ def _display_limits(data):
     if lower == upper:
         upper = lower + 1.0
     return float(lower), float(upper)
+
+
+def _velocity_in_kms(value, unit=None):
+    """Return a finite velocity value in km/s without guessing its unit."""
+    import astropy.units as u
+
+    if np.ma.is_masked(value):
+        return float("nan")
+    if hasattr(value, "to_value"):
+        converted = float(value.to_value(u.km / u.s))
+    elif unit is not None:
+        converted = float((float(value) * u.Unit(unit)).to_value(u.km / u.s))
+    else:
+        raise ValueError("A velocity unit is required.")
+    return converted if np.isfinite(converted) else float("nan")
+
+
+def _quiet_wcs(header):
+    """Construct a WCS without repeating harmless FITS-fix warnings per plot."""
+    import warnings
+    from astropy.wcs import FITSFixedWarning, WCS
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", FITSFixedWarning)
+        return WCS(header)
+
+
+def _spectral_velocity_axis(cube_header, channel_count):
+    """Convert the cube spectral WCS to a radio-velocity axis in km/s."""
+    import astropy.units as u
+
+    try:
+        spectral_wcs = _quiet_wcs(cube_header).spectral
+        spectral_values = np.asarray(
+            spectral_wcs.pixel_to_world_values(
+                np.arange(channel_count, dtype=float)
+            ),
+            dtype=float,
+        )
+        unit_name = spectral_wcs.world_axis_units[0]
+        spectral_unit = u.Unit(unit_name)
+    except Exception as error:
+        raise ValueError(
+            "Could not derive the spectral coordinate from the cube WCS."
+        ) from error
+    if spectral_values.shape != (channel_count,) or not np.all(
+        np.isfinite(spectral_values)
+    ):
+        raise ValueError("The cube spectral WCS produced invalid coordinates.")
+
+    spectral_quantity = spectral_values * spectral_unit
+    if spectral_unit.is_equivalent(u.m / u.s):
+        return spectral_quantity.to_value(u.km / u.s)
+
+    rest_frequency = cube_header.get(
+        "RESTFRQ", cube_header.get("RESTFREQ")
+    )
+    if rest_frequency is None:
+        raise ValueError(
+            "A frequency/wavelength spectral cube requires RESTFRQ or RESTFREQ "
+            "to create velocity PV plots."
+        )
+    try:
+        rest = float(rest_frequency) * u.Hz
+        return spectral_quantity.to_value(
+            u.km / u.s,
+            equivalencies=u.doppler_radio(rest),
+        )
+    except Exception as error:
+        raise ValueError(
+            "Could not convert the cube spectral WCS to radio velocity."
+        ) from error
+
+
+def _spatial_coordinate_axis(cube_header, shape, spatial_axis):
+    """Return RA or Dec pixel-centre coordinates for a 3-D cube."""
+    _, height, width = shape
+    try:
+        celestial_wcs = _quiet_wcs(cube_header).celestial
+        if not celestial_wcs.has_celestial:
+            raise ValueError("no celestial WCS")
+        if spatial_axis == "ra":
+            pixels = np.arange(width, dtype=float)
+            coordinates, _ = celestial_wcs.pixel_to_world_values(
+                pixels, np.full(width, (height - 1.0) / 2.0)
+            )
+            # Keep a continuous longitude axis for fields crossing RA=0.
+            coordinates = np.rad2deg(
+                np.unwrap(np.deg2rad(np.asarray(coordinates, dtype=float)))
+            )
+        elif spatial_axis == "dec":
+            pixels = np.arange(height, dtype=float)
+            _, coordinates = celestial_wcs.pixel_to_world_values(
+                np.full(height, (width - 1.0) / 2.0), pixels
+            )
+            coordinates = np.asarray(coordinates, dtype=float)
+        else:
+            raise ValueError("spatial_axis must be 'ra' or 'dec'.")
+    except Exception as error:
+        if isinstance(error, ValueError) and "spatial_axis" in str(error):
+            raise
+        raise ValueError(
+            f"Could not derive the {spatial_axis.upper()} coordinate from "
+            "the cube celestial WCS."
+        ) from error
+    if not np.all(np.isfinite(coordinates)):
+        raise ValueError(
+            f"The cube celestial WCS produced invalid {spatial_axis.upper()} "
+            "coordinates."
+        )
+    return coordinates
+
+
+def pv_projection_data(cube_data, cube_header, source_mask, spatial_axis):
+    """Build a parent-mask-aware RA/Dec-versus-velocity PV projection.
+
+    The cube is summed over the orthogonal celestial axis. ``background`` uses
+    all finite cubelet voxels, while ``source`` and ``support`` use only voxels
+    inside the supplied 3-D parent/source mask.
+    """
+    cube = np.squeeze(
+        np.asarray(np.ma.getdata(cube_data), dtype=float)
+    )
+    if cube.ndim != 3:
+        raise ValueError(
+            f"Expected a 3-D cube for PV plotting, found shape {cube.shape}."
+        )
+    mask = np.squeeze(np.asarray(np.ma.getdata(source_mask)))
+    if mask.ndim == 2:
+        mask = np.broadcast_to(mask > 0, cube.shape)
+    elif mask.ndim == 3:
+        mask = mask > 0
+    else:
+        raise ValueError(
+            "The source mask for PV plotting must be 2-D or 3-D; "
+            f"found shape {mask.shape}."
+        )
+    if mask.shape != cube.shape:
+        raise ValueError(
+            "The source mask and cube used for PV plotting have different "
+            f"shapes: {mask.shape} and {cube.shape}."
+        )
+
+    if spatial_axis == "ra":
+        collapse_axis = 1
+    elif spatial_axis == "dec":
+        collapse_axis = 2
+    else:
+        raise ValueError("spatial_axis must be 'ra' or 'dec'.")
+
+    finite = np.isfinite(cube)
+    background = np.sum(
+        np.where(finite, cube, 0.0), axis=collapse_axis
+    )
+    source = np.sum(
+        np.where(finite & mask, cube, 0.0), axis=collapse_axis
+    )
+    support = np.any(mask, axis=collapse_axis)
+    spatial_coordinates = _spatial_coordinate_axis(
+        cube_header, cube.shape, spatial_axis
+    )
+    velocities = _spectral_velocity_axis(cube_header, cube.shape[0])
+    if velocities.size > 1 and velocities[0] > velocities[-1]:
+        velocities = velocities[::-1]
+        background = background[::-1]
+        source = source[::-1]
+        support = support[::-1]
+    return {
+        "spatial_axis": spatial_axis,
+        "spatial_coordinates": spatial_coordinates,
+        "velocity_kms": velocities,
+        "background": background,
+        "source": source,
+        "support": support,
+    }
+
+
+def _coordinate_edges(coordinates):
+    """Convert monotonic pixel-centre coordinates to plotting edges."""
+    values = np.asarray(coordinates, dtype=float)
+    if values.ndim != 1 or values.size == 0:
+        raise ValueError("PV plot coordinates must be a non-empty 1-D array.")
+    if values.size == 1:
+        return np.array([values[0] - 0.5, values[0] + 0.5])
+    differences = np.diff(values)
+    if not np.all(np.isfinite(differences)) or not (
+        np.all(differences > 0) or np.all(differences < 0)
+    ):
+        raise ValueError("PV plot coordinates must be strictly monotonic.")
+    edges = np.empty(values.size + 1, dtype=float)
+    edges[1:-1] = (values[:-1] + values[1:]) / 2.0
+    edges[0] = values[0] - differences[0] / 2.0
+    edges[-1] = values[-1] + differences[-1] / 2.0
+    return edges
+
+
+def _align_ra_to_axis(ra_deg, spatial_coordinates):
+    reference = float(np.mean(spatial_coordinates))
+    return reference + ((float(ra_deg) - reference + 180.0) % 360.0) - 180.0
+
+
+def _pv_optical_centres(optical_image_name, marker_data):
+    """Return world-coordinate centroids of positive cyan marker labels."""
+    from astropy.io import fits
+    optical_wcs = _quiet_wcs(fits.getheader(optical_image_name)).celestial
+    if not optical_wcs.has_celestial:
+        raise ValueError("The optical marker image has no celestial WCS.")
+    centres = []
+    for x_position, y_position, label in marker_centroids(marker_data):
+        ra_deg, dec_deg = optical_wcs.pixel_to_world_values(
+            x_position, y_position
+        )
+        if np.isfinite(ra_deg) and np.isfinite(dec_deg):
+            centres.append((float(ra_deg), float(dec_deg), label))
+    return centres
+
+
+def _add_pv_position_guides(
+    axes,
+    projection,
+    optical_centres,
+    catalogue_positions,
+):
+    """Draw spatial-only optical/catalogue locations as vertical PV guides."""
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import blended_transform_factory
+
+    spatial_axis = projection["spatial_axis"]
+    coordinates = projection["spatial_coordinates"]
+    minimum, maximum = sorted((float(coordinates[0]), float(coordinates[-1])))
+
+    def spatial_value(ra_deg, dec_deg):
+        if spatial_axis == "ra":
+            return _align_ra_to_axis(ra_deg, coordinates)
+        return float(dec_deg)
+
+    visible_optical = []
+    for ra_deg, dec_deg, label in optical_centres:
+        value = spatial_value(ra_deg, dec_deg)
+        if minimum <= value <= maximum:
+            visible_optical.append((value, label))
+            axes.axvline(
+                value,
+                color=OPTICAL_MARKER_COLOUR,
+                linewidth=1.0,
+                linestyle=":",
+                alpha=0.75,
+                zorder=5,
+            )
+
+    visible_positions = []
+    text_transform = blended_transform_factory(
+        axes.transData, axes.transAxes
+    )
+    for index, position in enumerate(deduplicate_positions(catalogue_positions)):
+        value = spatial_value(position["ra_deg"], position["dec_deg"])
+        if not minimum <= value <= maximum:
+            continue
+        rejected = position.get("marker_status") == "rejected"
+        colour = (
+            REJECTED_CATALOGUE_COLOUR if rejected else CATALOGUE_COLOUR
+        )
+        axes.axvline(
+            value,
+            color=colour,
+            linewidth=1.5,
+            linestyle="--" if rejected else "-",
+            alpha=0.90,
+            zorder=7,
+        )
+        axes.text(
+            value,
+            0.02 + 0.05 * (index % 2),
+            position["name"],
+            transform=text_transform,
+            rotation=90,
+            rotation_mode="anchor",
+            ha="left",
+            va="bottom",
+            fontsize=6.5,
+            color=colour,
+            bbox={
+                "boxstyle": "round,pad=0.15",
+                "facecolor": "#191919",
+                "edgecolor": "none",
+                "alpha": 0.60,
+            },
+            zorder=8,
+        )
+        visible_positions.append(position)
+
+    legend_items = []
+    if visible_optical:
+        legend_items.append(
+            Line2D(
+                [0], [0], color=OPTICAL_MARKER_COLOUR, linestyle=":",
+                linewidth=1.5, label="Detected optical source position"
+            )
+        )
+    if any(
+        position.get("marker_status") != "rejected"
+        for position in visible_positions
+    ):
+        legend_items.append(
+            Line2D(
+                [0], [0], color=CATALOGUE_COLOUR, linewidth=1.7,
+                label="Accepted catalogue position (no velocity)"
+            )
+        )
+    if any(
+        position.get("marker_status") == "rejected"
+        for position in visible_positions
+    ):
+        legend_items.append(
+            Line2D(
+                [0], [0], color=REJECTED_CATALOGUE_COLOUR,
+                linestyle="--", linewidth=1.7,
+                label="Rejected catalogue position (no velocity)"
+            )
+        )
+    return visible_optical, visible_positions, legend_items
+
+
+def _load_component_pv(component, spatial_axis):
+    from astropy.io import fits
+
+    cube_name = component.get("cube_name")
+    mask_name = component.get("mask_name")
+    if not cube_name or not mask_name:
+        raise ValueError("missing child cube or mask")
+    child_cube, child_header = fits.getdata(cube_name, header=True)
+    child_mask = fits.getdata(mask_name)
+    return pv_projection_data(
+        child_cube, child_header, child_mask, spatial_axis
+    )
+
+
+def write_pv_debug_overlay(
+    *,
+    cube_data,
+    cube_header,
+    source_mask,
+    optical_image_name,
+    marker_data,
+    catalogue_positions,
+    output_name,
+    source_id,
+    spatial_axis,
+    marker_mode="automatic + manual catalogue",
+    components=None,
+):
+    """Write one RA/Dec-versus-velocity QA projection."""
+    import matplotlib
+
+    matplotlib.use("Agg", force=True)
+    from matplotlib import pyplot as plt
+    from matplotlib.colors import ListedColormap
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    from matplotlib.ticker import FuncFormatter
+    from astropy.coordinates import Angle
+    import astropy.units as u
+
+    projection = pv_projection_data(
+        cube_data, cube_header, source_mask, spatial_axis
+    )
+    spatial_coordinates = projection["spatial_coordinates"]
+    velocities = projection["velocity_kms"]
+    x_edges = _coordinate_edges(spatial_coordinates)
+    y_edges = _coordinate_edges(velocities)
+
+    figure, axes = plt.subplots(figsize=(9, 7))
+    lower, upper = _display_limits(projection["background"])
+    axes.pcolormesh(
+        x_edges,
+        y_edges,
+        projection["background"],
+        cmap="gray",
+        vmin=lower,
+        vmax=upper,
+        shading="flat",
+        rasterized=True,
+    )
+    footprint = np.ma.masked_where(
+        ~projection["support"],
+        np.ones(projection["support"].shape, dtype=float),
+    )
+    axes.pcolormesh(
+        x_edges,
+        y_edges,
+        footprint,
+        cmap=ListedColormap([PURPLE]),
+        alpha=0.40,
+        shading="flat",
+        rasterized=True,
+    )
+    parent_levels = contour_levels(
+        projection["source"], projection["support"]
+    )
+    if parent_levels:
+        axes.contour(
+            spatial_coordinates,
+            velocities,
+            np.ma.masked_where(
+                ~projection["support"], projection["source"]
+            ),
+            levels=parent_levels,
+            colors=CONTOUR_PURPLE,
+            linewidths=0.8,
+            alpha=0.70,
+            zorder=4,
+        )
+
+    optical_centres = _pv_optical_centres(
+        optical_image_name, marker_data
+    )
+    visible_optical, visible_positions, guide_legend = (
+        _add_pv_position_guides(
+            axes,
+            projection,
+            optical_centres,
+            catalogue_positions,
+        )
+    )
+
+    usable_components = []
+    component_legend = []
+    component_centres = 0
+    component_list = components or []
+    colours = component_colour_mapping(
+        [component.get("id", "") for component in component_list]
+    )
+    for component in component_list:
+        component_id = _normalise_component_id(component.get("id", ""))
+        try:
+            child_projection = _load_component_pv(
+                component, spatial_axis
+            )
+            child_levels = contour_levels(
+                child_projection["source"], child_projection["support"]
+            )
+            if not child_levels:
+                raise ValueError("no finite, varying child PV values")
+        except Exception as error:
+            print(
+                "WARNING: Skipping trial H I component "
+                f"{component_id or 'unknown'} in the {spatial_axis.upper()} "
+                f"PV overlay: {type(error).__name__}: {error}"
+            )
+            continue
+        colour = colours[component_id]
+        axes.contour(
+            child_projection["spatial_coordinates"],
+            child_projection["velocity_kms"],
+            np.ma.masked_where(
+                ~child_projection["support"], child_projection["source"]
+            ),
+            levels=child_levels,
+            colors=colour,
+            linewidths=1.35,
+            alpha=0.95,
+            zorder=6,
+        )
+        usable_components.append(component)
+        component_legend.append(
+            Line2D(
+                [0], [0], color=colour, linewidth=1.6, marker="o",
+                markerfacecolor=colour, markeredgecolor="#191919",
+                markersize=5.5, label=f"H I child {component_id}"
+            )
+        )
+        try:
+            spatial_value = (
+                _align_ra_to_axis(
+                    component["ra_deg"], spatial_coordinates
+                )
+                if spatial_axis == "ra"
+                else float(component["dec_deg"])
+            )
+            velocity = float(component["velocity_kms"])
+            minimum, maximum = sorted(
+                (float(spatial_coordinates[0]), float(spatial_coordinates[-1]))
+            )
+            centre_is_valid = (
+                np.isfinite(spatial_value)
+                and np.isfinite(velocity)
+                and minimum <= spatial_value <= maximum
+                and velocities[0] <= velocity <= velocities[-1]
+            )
+        except (KeyError, TypeError, ValueError):
+            centre_is_valid = False
+        if centre_is_valid:
+            axes.scatter(
+                spatial_value,
+                velocity,
+                marker="o",
+                s=58,
+                color=colour,
+                edgecolor="#191919",
+                linewidth=1.0,
+                zorder=9,
+            )
+            axes.annotate(
+                f"H I {component_id}",
+                (spatial_value, velocity),
+                xytext=(6, -10),
+                textcoords="offset points",
+                fontsize=7,
+                color=colour,
+                bbox={
+                    "boxstyle": "round,pad=0.18",
+                    "facecolor": "#191919",
+                    "edgecolor": "none",
+                    "alpha": 0.68,
+                },
+                zorder=10,
+            )
+            component_centres += 1
+
+    spatial_name = "Right Ascension" if spatial_axis == "ra" else "Declination"
+    collapsed_name = "Declination" if spatial_axis == "ra" else "Right Ascension"
+    if spatial_axis == "ra":
+        axes.xaxis.set_major_formatter(
+            FuncFormatter(
+                lambda value, _: Angle(value * u.deg).to_string(
+                    unit=u.hourangle, sep=":", precision=0, pad=True
+                )
+            )
+        )
+    else:
+        axes.xaxis.set_major_formatter(
+            FuncFormatter(
+                lambda value, _: Angle(value * u.deg).to_string(
+                    unit=u.deg, sep=":", precision=0, alwayssign=True
+                )
+            )
+        )
+    axes.set_xlabel(spatial_name)
+    axes.set_ylabel(r"Velocity (km s$^{-1}$)")
+    axes.grid(color="white", alpha=0.18, linestyle=":")
+    component_mode = bool(component_list)
+    if component_mode:
+        axes.set_title(
+            f"SoFiA source {source_id}: raw candidate H I component QA — "
+            f"{spatial_name} / velocity PV\n"
+            f"{len(usable_components)} candidate component(s), "
+            f"{component_centres} measured centre(s); summed over "
+            f"{collapsed_name}\nWatershed markers: {marker_mode}"
+        )
+    else:
+        axes.set_title(
+            f"SoFiA source {source_id}: catalogue QA — {spatial_name} / "
+            f"velocity PV\n{len(visible_optical)} optical detection(s), "
+            f"{len(visible_positions)} catalogue position(s); summed over "
+            f"{collapsed_name}\nWatershed markers: {marker_mode}"
+        )
+    legend_items = [
+        Patch(facecolor="0.45", label="Parent H I cube projection"),
+        Patch(facecolor=PURPLE, alpha=0.40, label="Parent H I footprint"),
+        Line2D(
+            [0], [0], color=CONTOUR_PURPLE, linewidth=1.0,
+            label="Parent H I PV contours"
+        ),
+    ]
+    legend_items.extend(guide_legend)
+    legend_items.extend(component_legend)
+    axes.legend(
+        handles=legend_items,
+        loc="upper right",
+        fontsize=7,
+        ncol=2 if len(legend_items) > 7 else 1,
+    )
+    axes.set_xlim(float(x_edges[0]), float(x_edges[-1]))
+    axes.set_ylim(float(y_edges[0]), float(y_edges[-1]))
+
+    output_path = Path(output_name)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(figure)
+    return output_path
+
+
+def write_source_pv_debug_overlays(*, output_ra_name, output_dec_name, **kwargs):
+    """Write catalogue QA projections in RA-velocity and Dec-velocity."""
+    ra_path = write_pv_debug_overlay(
+        output_name=output_ra_name,
+        spatial_axis="ra",
+        **kwargs,
+    )
+    dec_path = write_pv_debug_overlay(
+        output_name=output_dec_name,
+        spatial_axis="dec",
+        **kwargs,
+    )
+    return ra_path, dec_path
+
+
+def write_source_pv_debug_overlays_safely(**kwargs):
+    """Write catalogue PV QA without allowing plotting to stop a run."""
+    try:
+        output_paths = write_source_pv_debug_overlays(**kwargs)
+        print(
+            "Wrote catalogue PV debug overlays to "
+            f"{output_paths[0]} and {output_paths[1]}."
+        )
+        return output_paths
+    except Exception as error:
+        try:
+            from matplotlib import pyplot as plt
+
+            plt.close("all")
+        except Exception:
+            pass
+        source_id = kwargs.get("source_id", "unknown")
+        print(
+            "WARNING: Could not create the catalogue PV debug overlays for "
+            f"SoFiA source {source_id}: {type(error).__name__}: {error}"
+        )
+        return None
+
+
+def write_hi_component_pv_debug_overlays(
+    *, output_ra_name, output_dec_name, **kwargs
+):
+    """Write raw-child QA projections in RA-velocity and Dec-velocity."""
+    ra_path = write_pv_debug_overlay(
+        output_name=output_ra_name,
+        spatial_axis="ra",
+        **kwargs,
+    )
+    dec_path = write_pv_debug_overlay(
+        output_name=output_dec_name,
+        spatial_axis="dec",
+        **kwargs,
+    )
+    return ra_path, dec_path
+
+
+def write_hi_component_pv_debug_overlays_safely(**kwargs):
+    """Write raw-child PV QA without allowing plotting to stop a run."""
+    components = kwargs.get("components") or []
+    if not components:
+        return None
+    try:
+        output_paths = write_hi_component_pv_debug_overlays(**kwargs)
+        print(
+            "Wrote raw trial H I component PV debug overlays to "
+            f"{output_paths[0]} and {output_paths[1]}."
+        )
+        return output_paths
+    except Exception as error:
+        try:
+            from matplotlib import pyplot as plt
+
+            plt.close("all")
+        except Exception:
+            pass
+        source_id = kwargs.get("source_id", "unknown")
+        print(
+            "WARNING: Could not create the raw trial H I component PV debug "
+            f"overlays for SoFiA source {source_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+        return None
 
 
 def write_source_debug_overlay(

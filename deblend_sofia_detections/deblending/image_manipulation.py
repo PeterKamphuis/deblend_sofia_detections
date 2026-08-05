@@ -6,7 +6,8 @@ from deblend_sofia_detections.deblending.sofia_functions import \
     execute_sofia
 from deblend_sofia_detections.deblending.debug_visualization import \
     matched_counterpart_positions,trial_hi_components_from_table,\
-    write_hi_component_debug_overlay_safely
+    write_hi_component_debug_overlay_safely,\
+    write_hi_component_pv_debug_overlays_safely
 from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
@@ -396,7 +397,8 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 
 def split_sources(cfg_in,cube_name, mask, 
         outdir='./', catalogue = False, counterpart_positions=None,
-        automatic_counterpart_table=None, debug_overlay=None):
+        automatic_counterpart_table=None, debug_overlay=None,
+        pv_debug_overlay=None):
     """
     Split the sources in the deblended 3D data cube.
     
@@ -476,6 +478,26 @@ def split_sources(cfg_in,cube_name, mask,
                 write_hi_component_debug_overlay_safely(
                     **component_overlay
                 )
+                if pv_debug_overlay is not None:
+                    component_pv_overlay = dict(pv_debug_overlay)
+                    component_pv_overlay.update(
+                        {
+                            "components": components,
+                            "output_ra_name": (
+                                f"{outdir}debug_products/"
+                                "optical_hi_components_pv_ra_velocity_source_"
+                                f"{pv_debug_overlay['source_id']}.png"
+                            ),
+                            "output_dec_name": (
+                                f"{outdir}debug_products/"
+                                "optical_hi_components_pv_dec_velocity_source_"
+                                f"{pv_debug_overlay['source_id']}.png"
+                            ),
+                        }
+                    )
+                    write_hi_component_pv_debug_overlays_safely(
+                        **component_pv_overlay
+                    )
         for source in split_sources:
             if cfg.general.verbose:
                 print(f"Processing source with id {source['id']} and name {source['name']}")
