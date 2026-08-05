@@ -24,6 +24,12 @@ class Input:
     # Optionally require an automatically selected DR10 marker's exact optical
     # segmentation region to contain a positive, beam-scale moment-0 peak.
     filter_dr10_markers_by_moment0_peaks: bool = False
+    # Use Photutils multi-threshold deblending only for a cyan region containing
+    # at least two moment-0 peaks.  This requires the DR10 moment-0 filter.
+    deblend_optical_regions_with_multiple_moment0_peaks: bool = False
+    optical_deblend_nlevels: int = 32
+    optical_deblend_contrast: float = 0.001
+    optical_deblend_min_pixels: int = 20
     # If True, only manual catalogue positions seed optical watershed runs.
     # Automatic optical detections remain available as debug diagnostics.
     manual_markers_only: bool = False

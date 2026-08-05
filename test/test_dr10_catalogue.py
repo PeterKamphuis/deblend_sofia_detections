@@ -364,6 +364,40 @@ class Dr10CatalogueTests(unittest.TestCase):
         self.assertEqual(len(accepted), 0)
         self.assertFalse(bool(audit["moment0_peak_supported"][0]))
 
+    def test_precomputed_peak_map_is_reused_after_targeted_deblending(self):
+        wcs, header = make_wcs(width=12, height=12)
+        header = add_beam(header)
+        markers = np.zeros((12, 12), dtype=int)
+        markers[3:9, 3:9] = 1
+        selected = make_selected_table(
+            wcs, [("LS_REUSED", 6, 6, 1, 8.0, "SER")]
+        )
+        moment0 = np.zeros((12, 12), dtype=float)
+        moment0[6, 6] = 2.0
+        peak_map = np.zeros((12, 12), dtype=np.uint8)
+        peak_map[6, 6] = 1
+
+        with patch(
+            "deblend_sofia_detections.catalogue.dr10."
+            "detect_positive_beam_scale_moment0_peaks",
+            side_effect=AssertionError("peak map should be reused"),
+        ):
+            accepted, audit, returned_map = (
+                filter_dr10_counterparts_by_moment0_peaks(
+                    selected,
+                    markers,
+                    header,
+                    moment0,
+                    header,
+                    np.ones_like(moment0, dtype=bool),
+                    peak_map=peak_map,
+                )
+            )
+
+        self.assertEqual(list(accepted["Name"]), ["LS_REUSED"])
+        self.assertTrue(bool(audit["moment0_peak_supported"][0]))
+        np.testing.assert_array_equal(returned_map, peak_map)
+
     def test_peak_mapping_supports_different_wcs_resolutions(self):
         optical_wcs, optical_header = make_wcs(width=20, height=20)
         moment0_wcs, moment0_header = make_wcs(width=10, height=10)
@@ -510,6 +544,7 @@ class Dr10CatalogueTests(unittest.TestCase):
                 auto_query_catalogue=True,
                 galaxy_types=["SER"],
                 filter_dr10_markers_by_moment0_peaks=False,
+                deblend_optical_regions_with_multiple_moment0_peaks=False,
             ),
             general=SimpleNamespace(verbose=False, debug=False),
             internal=SimpleNamespace(
@@ -552,6 +587,43 @@ class Dr10CatalogueTests(unittest.TestCase):
         self.assertIs(result, detected)
         self.assertIs(diagnostics["automatic_counterpart_table"], selected)
 
+    def test_targeted_optical_deblending_requires_moment0_filter(self):
+        _, header = make_wcs()
+        detected = np.ma.masked_array(
+            np.ones((8, 8), dtype=int), mask=False
+        )
+        cfg = SimpleNamespace(
+            input=SimpleNamespace(
+                manual_input_tables=[None],
+                manual_markers_only=False,
+                auto_query_catalogue=True,
+                galaxy_types=["SER"],
+                filter_dr10_markers_by_moment0_peaks=False,
+                deblend_optical_regions_with_multiple_moment0_peaks=True,
+            ),
+            general=SimpleNamespace(verbose=False, debug=False),
+            internal=SimpleNamespace(
+                auto_catalogue_path="automatic.csv", image_counter=0
+            ),
+            directories=SimpleNamespace(ancillary_directory="/unused"),
+        )
+        with (
+            patch(
+                "deblend_sofia_detections.deblending.deblending."
+                "detect_optical_sources",
+                return_value=(detected, header, np.ones((8, 8))),
+            ),
+            patch(
+                "deblend_sofia_detections.deblending.deblending."
+                "load_dr10_catalogue",
+                return_value=QTable(),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                InputError, "filter_dr10_markers_by_moment0_peaks=true"
+            ):
+                set_optical_markers(cfg, "93", np.ones((3, 8, 8)))
+
     def test_manual_catalogue_precedence_bypasses_peak_filter(self):
         _, header = make_wcs()
         detected = np.ma.masked_array(
@@ -566,7 +638,8 @@ class Dr10CatalogueTests(unittest.TestCase):
                 manual_markers_only=False,
                 auto_query_catalogue=True,
                 galaxy_types=["SER"],
-                filter_dr10_markers_by_moment0_peaks=True,
+                filter_dr10_markers_by_moment0_peaks=False,
+                deblend_optical_regions_with_multiple_moment0_peaks=True,
             ),
             general=SimpleNamespace(verbose=False, debug=False),
             internal=SimpleNamespace(

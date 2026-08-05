@@ -697,28 +697,18 @@ def _empty_peak_filter_audit(selected):
     return audit
 
 
-def filter_dr10_counterparts_by_moment0_peaks(
-    selected,
+def _map_moment0_peaks_to_optical_labels(
+    peak_map,
+    moment0_header,
     detected_markers,
     optical_header,
-    moment0_data,
-    moment0_header,
-    parent_mask,
 ):
-    """Keep selected DR10 rows whose exact cyan region contains an H I peak.
-
-    Returns ``(accepted_rows, audit_table, peak_map)``.  Peak pixels are mapped
-    from the moment-0 WCS into the optical-segmentation WCS, so the two images
-    may have different pixel sizes, rotations, and array shapes.
-    """
-    if selected is None or not hasattr(selected, "colnames"):
+    """Map representative moment-0 peak pixels into optical labels."""
+    peaks = np.squeeze(np.asarray(np.ma.getdata(peak_map))) > 0
+    if peaks.ndim != 2:
         raise InputError(
-            "The DR10 moment-0 peak filter received no selected catalogue table."
-        )
-    if "optical_label" not in selected.colnames:
-        raise InputError(
-            "The selected DR10 table has no optical_label column required by "
-            "the moment-0 peak filter."
+            "The moment-0 peak map must be 2-D before it can be mapped into "
+            f"cyan optical regions; found shape {peaks.shape}."
         )
     marker_data = np.squeeze(
         np.asarray(np.ma.getdata(detected_markers), dtype=int)
@@ -729,32 +719,20 @@ def filter_dr10_counterparts_by_moment0_peaks(
             f"2-D; found shape {marker_data.shape}."
         )
     try:
+        moment0_wcs = WCS(moment0_header).celestial
         optical_wcs = WCS(optical_header).celestial
     except Exception as error:
         raise InputError(
-            "Could not read the optical celestial WCS needed to associate "
-            "moment-0 peaks with cyan regions."
+            "Could not read the moment-0 or optical celestial WCS needed to "
+            "associate H I peaks with cyan regions."
         ) from error
-    if not optical_wcs.has_celestial:
+    if not moment0_wcs.has_celestial or not optical_wcs.has_celestial:
         raise InputError(
-            "The optical segmentation has no valid celestial WCS needed by "
-            "the DR10 moment-0 peak filter."
+            "Valid celestial WCS metadata is required in both the moment-0 "
+            "and optical headers to associate H I peaks with cyan regions."
         )
 
-    peak_map = detect_positive_beam_scale_moment0_peaks(
-        moment0_data,
-        moment0_header,
-        parent_mask,
-    )
-    audit = _empty_peak_filter_audit(selected)
-    if len(selected) == 0 or not np.any(peak_map):
-        return QTable(selected[:0], copy=True), audit, peak_map
-
-    moment0_array = np.squeeze(
-        np.asarray(np.ma.getdata(moment0_data), dtype=float)
-    )
-    moment0_wcs = WCS(moment0_header).celestial
-    peak_y, peak_x = np.nonzero(peak_map)
+    peak_y, peak_x = np.nonzero(peaks)
     peak_ra, peak_dec = moment0_wcs.pixel_to_world_values(peak_x, peak_y)
     optical_x, optical_y = optical_wcs.world_to_pixel_values(peak_ra, peak_dec)
     finite_optical = np.isfinite(optical_x) & np.isfinite(optical_y)
@@ -773,6 +751,103 @@ def filter_dr10_counterparts_by_moment0_peaks(
     peak_labels[inside_optical] = marker_data[
         rounded_y[inside_optical], rounded_x[inside_optical]
     ]
+    return {
+        "peak_x": peak_x,
+        "peak_y": peak_y,
+        "peak_ra": np.asarray(peak_ra, dtype=float),
+        "peak_dec": np.asarray(peak_dec, dtype=float),
+        "optical_x": np.asarray(optical_x, dtype=float),
+        "optical_y": np.asarray(optical_y, dtype=float),
+        "optical_label": peak_labels,
+    }
+
+
+def optical_labels_with_multiple_moment0_peaks(
+    peak_map,
+    moment0_header,
+    detected_markers,
+    optical_header,
+    minimum_peaks=2,
+):
+    """Return cyan labels containing at least ``minimum_peaks`` H I peaks."""
+    try:
+        minimum_peaks = int(minimum_peaks)
+    except (TypeError, ValueError) as error:
+        raise InputError("minimum_peaks must be a positive integer.") from error
+    if minimum_peaks < 1:
+        raise InputError("minimum_peaks must be a positive integer.")
+    mapped = _map_moment0_peaks_to_optical_labels(
+        peak_map,
+        moment0_header,
+        detected_markers,
+        optical_header,
+    )
+    labels, counts = np.unique(
+        mapped["optical_label"][mapped["optical_label"] > 0],
+        return_counts=True,
+    )
+    return [
+        int(label)
+        for label, count in zip(labels, counts)
+        if int(count) >= minimum_peaks
+    ]
+
+
+def filter_dr10_counterparts_by_moment0_peaks(
+    selected,
+    detected_markers,
+    optical_header,
+    moment0_data,
+    moment0_header,
+    parent_mask,
+    peak_map=None,
+):
+    """Keep selected DR10 rows whose exact cyan region contains an H I peak.
+
+    Returns ``(accepted_rows, audit_table, peak_map)``.  Peak pixels are mapped
+    from the moment-0 WCS into the optical-segmentation WCS, so the two images
+    may have different pixel sizes, rotations, and array shapes.
+    """
+    if selected is None or not hasattr(selected, "colnames"):
+        raise InputError(
+            "The DR10 moment-0 peak filter received no selected catalogue table."
+        )
+    if "optical_label" not in selected.colnames:
+        raise InputError(
+            "The selected DR10 table has no optical_label column required by "
+            "the moment-0 peak filter."
+        )
+    if peak_map is None:
+        peak_map = detect_positive_beam_scale_moment0_peaks(
+            moment0_data,
+            moment0_header,
+            parent_mask,
+        )
+    else:
+        peak_map = np.squeeze(np.asarray(np.ma.getdata(peak_map))) > 0
+    moment0_array = np.squeeze(
+        np.asarray(np.ma.getdata(moment0_data), dtype=float)
+    )
+    if peak_map.shape != moment0_array.shape:
+        raise InputError(
+            "The supplied moment-0 peak map and parent moment-0 image have "
+            f"different shapes: {peak_map.shape} and {moment0_array.shape}."
+        )
+    audit = _empty_peak_filter_audit(selected)
+    if len(selected) == 0 or not np.any(peak_map):
+        return QTable(selected[:0], copy=True), audit, peak_map
+
+    mapped_peaks = _map_moment0_peaks_to_optical_labels(
+        peak_map,
+        moment0_header,
+        detected_markers,
+        optical_header,
+    )
+    peak_x = mapped_peaks["peak_x"]
+    peak_y = mapped_peaks["peak_y"]
+    peak_ra = mapped_peaks["peak_ra"]
+    peak_dec = mapped_peaks["peak_dec"]
+    peak_labels = mapped_peaks["optical_label"]
     peak_values = moment0_array[peak_y, peak_x]
 
     accepted_mask = np.zeros(len(selected), dtype=bool)

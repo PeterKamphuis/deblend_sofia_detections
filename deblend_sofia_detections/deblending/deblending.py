@@ -1,7 +1,9 @@
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical
 from deblend_sofia_detections.catalogue.dr10 import \
+    detect_positive_beam_scale_moment0_peaks,\
     filter_dr10_counterparts_by_moment0_peaks,\
     has_manual_catalogue,load_dr10_catalogue,prepare_dr10_catalogue,\
+    optical_labels_with_multiple_moment0_peaks,\
     remove_rejected_optical_regions,select_dr10_counterparts,\
     write_moment0_peak_filter_debug_products
 from deblend_sofia_detections.deblending.image_manipulation import\
@@ -28,7 +30,9 @@ from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.wcs import WCS
 
 from skimage.segmentation import watershed
-from photutils.segmentation import detect_threshold, detect_sources,  make_2dgaussian_kernel
+from photutils.segmentation import \
+    SegmentationImage,deblend_sources,detect_threshold,detect_sources,\
+    make_2dgaussian_kernel
 PROFILING = False  # set to True to enable memory profiling
 if PROFILING:
     from memory_profiler import profile
@@ -40,6 +44,7 @@ else:
 
 import astropy.units as u
 import copy
+import inspect
 import numpy as np
 import os
 import shutil
@@ -423,7 +428,7 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     else:
         inv_mask = None
     
-    # try to reduce the value of npixel if only one source is detected
+    # Try to reduce npixels if only one connected source region is detected.
     # As we only know for certain that the target has an optical counterpart we need a single source but
     # not necessarily more but if we have only one there is no point deblending
     segm_deblend = np.zeros(optical_image[0].data.shape)
@@ -438,11 +443,14 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
    
     if np.max(segm_deblend) > 0 and cfg.general.verbose:
         if cfg.general.verbose: 
-            print(f"Detected {np.max(segm_deblend)} sources after deblending in the optical image.")
+            print(
+                f"Detected {np.max(segm_deblend)} connected optical region(s) "
+                "before optional targeted deblending."
+            )
     else:
         if cfg.general.verbose:
             print("No sources detected in the optical image after deblending.")
-    # deblending results with background masked
+    # Connected-source detection results with background masked.
     if np.max(segm_deblend) > 0 and cfg.general.debug:
         fits.writeto(f'{cfg.directories.ancillary_directory}/debug_products/segmentation_map_of_optically_detected_sources_sfs{source_id}_debug_image_{cfg.internal.image_counter}.fits',
             segm_deblend.data, header=optical_image[0].header, overwrite=True)
@@ -451,6 +459,182 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
 
     return masked_deb,optical_image[0].header,hi_mask
+
+
+def targeted_deblend_optical_regions(
+    optical_data,
+    detected_markers,
+    optical_header,
+    peak_map,
+    moment0_header,
+    *,
+    nlevels=32,
+    contrast=0.001,
+    min_pixels=20,
+    verbose=False,
+):
+    """Deblend only cyan labels containing multiple beam-scale H I peaks."""
+    try:
+        nlevels = int(nlevels)
+        min_pixels = int(min_pixels)
+        contrast = float(contrast)
+    except (TypeError, ValueError) as error:
+        raise InputError(
+            "The targeted optical-deblending nlevels, min-pixels, and "
+            "contrast settings must be numeric."
+        ) from error
+    if nlevels < 2:
+        raise InputError("input.optical_deblend_nlevels must be at least 2.")
+    if min_pixels < 1:
+        raise InputError(
+            "input.optical_deblend_min_pixels must be a positive integer."
+        )
+    if not np.isfinite(contrast) or not 0.0 <= contrast <= 1.0:
+        raise InputError(
+            "input.optical_deblend_contrast must be between 0 and 1."
+        )
+
+    marker_data = np.squeeze(
+        np.asarray(np.ma.asarray(detected_markers).filled(0), dtype=int)
+    )
+    image_data = np.squeeze(
+        np.asarray(np.ma.getdata(optical_data), dtype=float)
+    )
+    if marker_data.ndim != 2 or image_data.ndim != 2:
+        raise InputError(
+            "Targeted optical deblending requires 2-D optical data and a "
+            "2-D segmentation map."
+        )
+    if marker_data.shape != image_data.shape:
+        raise InputError(
+            "The optical image and segmentation used for targeted deblending "
+            f"have different shapes: {image_data.shape} and {marker_data.shape}."
+        )
+
+    target_labels = optical_labels_with_multiple_moment0_peaks(
+        peak_map,
+        moment0_header,
+        marker_data,
+        optical_header,
+        minimum_peaks=2,
+    )
+    if not target_labels:
+        return np.ma.asarray(detected_markers).copy(), []
+
+    finite = np.isfinite(image_data)
+    if not np.any(finite):
+        raise InputError(
+            "The optical image contains no finite pixels for targeted "
+            "Photutils deblending."
+        )
+    # A non-finite Gaia-masked pixel must not become an artificial optical
+    # maximum.  Filling with the image minimum makes it a local depression.
+    photutils_data = image_data.copy()
+    photutils_data[~finite] = float(np.min(image_data[finite]))
+    segmentation = SegmentationImage(marker_data)
+
+    parameters = inspect.signature(deblend_sources).parameters
+    keyword_arguments = {
+        "labels": target_labels,
+        "contrast": contrast,
+        "mode": "exponential",
+        "connectivity": 8,
+        "relabel": True,
+    }
+    keyword_arguments[
+        "n_levels" if "n_levels" in parameters else "nlevels"
+    ] = nlevels
+    if "n_processes" in parameters:
+        keyword_arguments["n_processes"] = 1
+    elif "nproc" in parameters:
+        keyword_arguments["nproc"] = 1
+    if "progress_bar" in parameters:
+        keyword_arguments["progress_bar"] = False
+
+    try:
+        deblended = deblend_sources(
+            photutils_data,
+            segmentation,
+            min_pixels,
+            **keyword_arguments,
+        )
+    except Exception as error:
+        raise InputError(
+            "Photutils could not deblend the cyan optical region(s) "
+            f"{target_labels} containing multiple moment-0 peaks: {error}"
+        ) from error
+    result_data = np.asarray(deblended.data, dtype=int)
+    if verbose:
+        print(
+            "Targeted Photutils deblending processed optical label(s) "
+            f"{target_labels}; the segmentation changed from "
+            f"{len(np.unique(marker_data[marker_data > 0]))} to "
+            f"{len(np.unique(result_data[result_data > 0]))} label(s)."
+        )
+    return np.ma.masked_array(result_data, result_data <= 0), target_labels
+
+
+def write_targeted_optical_deblend_debug_products(
+    debug_directory,
+    source_id,
+    optical_header,
+    before_markers,
+    after_markers,
+    target_labels,
+    *,
+    nlevels,
+    contrast,
+    min_pixels,
+):
+    """Write the optical segmentation immediately before and after deblending."""
+    os.makedirs(debug_directory, exist_ok=True)
+    before_data = np.asarray(
+        np.ma.asarray(before_markers).filled(0), dtype=np.int32
+    )
+    after_data = np.asarray(
+        np.ma.asarray(after_markers).filled(0), dtype=np.int32
+    )
+    debug_header = optical_header.copy()
+    debug_header["TDBLEND"] = (True, "Targeted optical deblending enabled")
+    debug_header["TDBNRAW"] = (
+        len(np.unique(before_data[before_data > 0])),
+        "Raw optical label count",
+    )
+    debug_header["TDBNFIN"] = (
+        len(np.unique(after_data[after_data > 0])),
+        "Final optical label count",
+    )
+    debug_header["TDBNTGT"] = (len(target_labels), "Labels targeted")
+    debug_header["TDBNLVL"] = (int(nlevels), "Photutils threshold levels")
+    debug_header["TDBCONT"] = (float(contrast), "Photutils contrast")
+    debug_header["TDBNPIX"] = (int(min_pixels), "Photutils minimum pixels")
+    debug_header.add_history(
+        "Targeted original labels: "
+        + (", ".join(str(label) for label in target_labels) or "none")
+    )
+    before_name = os.path.join(
+        debug_directory,
+        f"optical_segmentation_before_targeted_deblend_source_{source_id}.fits",
+    )
+    after_name = os.path.join(
+        debug_directory,
+        f"optical_segmentation_after_targeted_deblend_source_{source_id}.fits",
+    )
+    fits.writeto(
+        before_name,
+        before_data,
+        header=debug_header,
+        overwrite=True,
+        output_verify="silentfix",
+    )
+    fits.writeto(
+        after_name,
+        after_data,
+        header=debug_header,
+        overwrite=True,
+        output_verify="silentfix",
+    )
+    return before_name, after_name
 
 
 def gaia_debug_product_paths(cfg, source_id):
@@ -895,6 +1079,91 @@ def set_optical_markers(
         full_catalogue = load_dr10_catalogue(
             cfg.internal.auto_catalogue_path
         )
+        peak_map = None
+        targeted_optical_deblending = getattr(
+            cfg.input,
+            "deblend_optical_regions_with_multiple_moment0_peaks",
+            False,
+        )
+        if targeted_optical_deblending:
+            if not getattr(
+                cfg.input, "filter_dr10_markers_by_moment0_peaks", False
+            ):
+                raise InputError(
+                    "input.deblend_optical_regions_with_multiple_moment0_peaks"
+                    "=true requires "
+                    "input.filter_dr10_markers_by_moment0_peaks=true so "
+                    "additional optical sublabels are filtered before the "
+                    "watershed."
+                )
+            if moment0_data is None or moment0_header is None:
+                raise InputError(
+                    "Targeted optical-region deblending requires the loaded "
+                    "parent moment-0 image and header."
+                )
+            peak_map = detect_positive_beam_scale_moment0_peaks(
+                moment0_data,
+                moment0_header,
+                mask,
+            )
+            raw_optical_markers = np.ma.asarray(
+                detected_optical_markers
+            ).copy()
+            try:
+                optical_data = fits.getdata(
+                    cfg.internal.cleaned_optical_background
+                )
+            except Exception as error:
+                raise InputError(
+                    "Could not load the cleaned optical image required for "
+                    f"targeted Photutils deblending: {error}"
+                ) from error
+            detected_optical_markers, target_labels = (
+                targeted_deblend_optical_regions(
+                    optical_data,
+                    detected_optical_markers,
+                    detected_optical_markers_header,
+                    peak_map,
+                    moment0_header,
+                    nlevels=getattr(
+                        cfg.input, "optical_deblend_nlevels", 32
+                    ),
+                    contrast=getattr(
+                        cfg.input, "optical_deblend_contrast", 0.001
+                    ),
+                    min_pixels=getattr(
+                        cfg.input, "optical_deblend_min_pixels", 20
+                    ),
+                    verbose=cfg.general.verbose,
+                )
+            )
+            if diagnostics is not None:
+                diagnostics['detected_optical_markers'] = np.ma.asarray(
+                    detected_optical_markers
+                ).filled(0).copy()
+                diagnostics['targeted_optical_deblend_labels'] = target_labels
+            if cfg.general.debug:
+                if debug_directory is None:
+                    debug_directory = (
+                        f"{cfg.directories.ancillary_directory}/debug_products"
+                    )
+                write_targeted_optical_deblend_debug_products(
+                    debug_directory,
+                    sofia_id,
+                    detected_optical_markers_header,
+                    raw_optical_markers,
+                    detected_optical_markers,
+                    target_labels,
+                    nlevels=getattr(
+                        cfg.input, "optical_deblend_nlevels", 32
+                    ),
+                    contrast=getattr(
+                        cfg.input, "optical_deblend_contrast", 0.001
+                    ),
+                    min_pixels=getattr(
+                        cfg.input, "optical_deblend_min_pixels", 20
+                    ),
+                )
         selected_table = select_dr10_counterparts(
             full_catalogue,
             detected_optical_markers,
@@ -921,6 +1190,7 @@ def set_optical_markers(
                     moment0_data,
                     moment0_header,
                     mask,
+                    peak_map=peak_map,
                 )
             )
             marker_base = remove_rejected_optical_regions(
@@ -962,6 +1232,8 @@ def set_optical_markers(
             diagnostics['marker_mode'] = (
                 "automatic + Legacy Surveys DR10 catalogue"
             )
+            if targeted_optical_deblending:
+                diagnostics['marker_mode'] += " + targeted optical deblending"
             if audit_table is not None:
                 diagnostics['marker_mode'] += " + moment-0 peak filter"
                 diagnostics['dr10_moment0_peak_filter_audit'] = audit_table
