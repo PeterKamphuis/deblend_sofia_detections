@@ -1,65 +1,77 @@
 .. _fork-differences:
 
-Changes from upstream
-=====================
+Project lineage and fork additions
+==================================
 
-Scope and provenance
---------------------
+Acknowledgement and purpose
+---------------------------
 
-This repository is an enhanced fork of
+This repository builds on
 `PeterKamphuis/deblend_sofia_detections <https://github.com/PeterKamphuis/deblend_sofia_detections>`_.
-The comparison on this page is intentionally pinned to exact committed states:
+We sincerely thank Peter Kamphuis for creating and maintaining the original
+package, publishing it as open-source software, and providing the scientific and
+technical foundation on which this fork depends. The watershed method also follows
+the work of Qifeng Huang and collaborators, who retain credit for the underlying
+method and implementation lineage.
 
-* upstream ``main`` at release ``v0.0.4``, commit
+This page records provenance and version-specific additions so users can tell
+which settings and outputs belong to the code they are running. The description is
+descriptive rather than evaluative: the additions reflect the operational needs of
+a particular large-field workflow and may not be appropriate for every use case.
+
+For scientific use, :doc:`Citing` gives separate citations for this fork, Peter
+Kamphuis's original package, and the Huang et al. method paper, together with
+suggested wording that explicitly thanks Peter for openly sharing the original
+project.
+
+Version scope
+-------------
+
+The notes are intentionally pinned to exact committed states:
+
+* Peter Kamphuis's original project at release ``v0.0.4``, commit
   `a6daef3 <https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3>`_;
 * this fork at release ``v1.0.0``, commit
   `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_.
 
-Only committed changes through ``v1.0.0`` are described. Work that has not yet
+Only committed additions through ``v1.0.0`` are described. Work that has not yet
 been committed and tagged is excluded so that every statement can be reproduced
 from the named revisions.
 
-The fork retains the upstream watershed method, SoFiA input-product conventions,
-counterpart-based filtering, master-mask update, and final field
-re-parameterisation. Its changes concentrate on controlling which sources run,
-surviving source-level failures, handling real-world optical FITS products, and
-making the proposed splits easier to audit scientifically.
+The fork retains the original project's watershed method, SoFiA input-product
+conventions, counterpart-based filtering, master-mask update, and final field
+re-parameterisation. Its additions concentrate on controlling which sources run,
+recording source-level failures, handling multi-plane optical FITS products, and
+making proposed splits easier to audit scientifically.
 
-Summary of differences
-----------------------
+Summary of additions maintained in this fork
+--------------------------------------------
 
 .. list-table::
    :header-rows: 1
-   :widths: 20 36 44
+   :widths: 25 75
 
    * - Area
-     - Upstream ``v0.0.4``
-     - This fork ``v1.0.0``
+     - Addition and intended use in this fork
    * - Source selection
-     - Iterates over every SoFiA catalogue ID.
      - Adds a validated ``input.source_ids`` allowlist; an empty list still
-       processes every source.
+       retains the original all-source workflow.
    * - Source exceptions
-     - An uncaught exception stops the field run.
-     - Continues by default, records detailed failures, and offers an explicit
-       fail-fast setting.
+     - Records detailed source-level failures, continues by default, and offers
+       an explicit fail-fast setting.
    * - Debug QA
-     - Primarily intermediate FITS masks and terminal output.
      - Adds optical/H I/catalogue and trial-child PNG overlays plus an ECSV record
        of plotted catalogue coordinates.
    * - Optical FITS dimensions
-     - Expects a directly usable 2-D manual image.
-     - Normalises RGB and other multi-plane images to 2-D using celestial WCS.
+     - Extends manual-image handling to normalise RGB and other multi-plane data
+       to 2-D using celestial WCS.
    * - Optical conversion
-     - No standalone converter.
      - Adds ``scripts/convert_optical_fits_to_2d.py`` with safe output and several
        collapse methods.
    * - Watershed markers
-     - Combines automatically detected optical sources with manual markers.
      - Optionally uses only manual catalogue markers while retaining automatic
        detections as QA context.
    * - Documentation and tests
-     - Concise installation and configuration notes.
      - Adds an operational guide and regression tests for fork-specific behavior.
 
 1. Select only the source IDs that need testing
@@ -77,7 +89,7 @@ The requested IDs are normalised for comparison with Astropy/OmegaConf scalar
 types and checked against the original SoFiA catalogue before optical images or
 cubelets are processed. Unknown IDs raise an input error. Catalogue ordering and
 catalogue scalar types are preserved, and duplicate requested values are processed
-once. With ``source_ids: []`` the behavior remains the upstream all-source loop.
+once. With ``source_ids: []`` the original all-source loop is retained.
 
 This option limits candidate processing, not the final scientific data model. If
 one selected source is split successfully, new component labels are inserted into
@@ -99,8 +111,8 @@ requested, successful, and failed counts and all recorded failures. It is also
 rewritten after a completely successful run, preventing a stale failure report
 from being mistaken for current output.
 
-Set ``continue_on_source_error: false`` to stop at the first exception. The report
-is written before that exception is re-raised.
+Set ``continue_on_source_error: false`` when stopping at the first exception is
+preferred. The report is written before that exception is re-raised.
 
 3. Add optical, H I, catalogue, and child-component QA
 ------------------------------------------------------
@@ -131,10 +143,11 @@ adds Matplotlib as a runtime dependency for these products.
 4. Handle multi-dimensional manual optical FITS files
 -----------------------------------------------------
 
-The fork no longer assumes that every manual optical FITS image is already 2-D.
-It inspects WCS axis metadata, maps the two celestial pixel axes onto NumPy array
-axes, and averages all non-celestial axes. This supports conventional plane-first
-cubes as well as RGB/RGBA arrays whose colour axis is stored elsewhere.
+In addition to the original 2-D manual-image path, the fork accepts
+multi-dimensional optical FITS images. It inspects WCS axis metadata, maps the two
+celestial pixel axes onto NumPy array axes, and averages all non-celestial axes.
+This supports conventional plane-first cubes as well as RGB/RGBA arrays whose
+colour axis is stored elsewhere.
 
 The reduction records the original shape and collapsed axes, retains celestial
 WCS for later cutouts, and raises focused input errors when the FITS file has no
@@ -173,10 +186,10 @@ behavior.
 6. Expand operations documentation and regression coverage
 -----------------------------------------------------------
 
-The fork replaces the short README with a beginner-oriented guide covering the
-cube-mask-catalogue relationship, watershed routes, required SoFiA products,
-installation, copied-workspace safety, source allowlists, manual images and
-catalogues, outputs, scientific QA, and troubleshooting. The advanced
+The fork complements the original project documentation with a beginner-oriented
+guide covering the cube-mask-catalogue relationship, watershed routes, required
+SoFiA products, installation, copied-workspace safety, source allowlists, manual
+images and catalogues, outputs, scientific QA, and troubleshooting. The advanced
 configuration reference documents each new setting.
 
 Focused tests cover source-ID selection and error reporting, stale failure-log
@@ -184,19 +197,19 @@ replacement, WCS-aware QA plots and catalogue records, trial-child overlays,
 multi-axis optical reduction, the standalone converter CLI, and manual-only marker
 selection.
 
-Compatibility and unchanged limitations
-----------------------------------------
+Continuity with the original workflow and scientific limitations
+-----------------------------------------------------------------
 
-The new controls are compatible with the upstream workflow when left at their
-defaults:
+The original project's broad workflow remains available when the fork-specific
+controls are left at their defaults:
 
 * ``input.source_ids: []`` processes all catalogue IDs;
 * ``input.manual_markers_only: false`` retains automatic optical markers;
 * ``general.debug: false`` does not generate the new PNG/ECSV QA products.
 
-The exception policy is intentionally different: this fork continues after a
-source-level error by default. Set ``general.continue_on_source_error: false`` for
-upstream-style fail-fast behavior.
+The exception policy is a version-specific choice: this fork continues after a
+source-level error by default. Set ``general.continue_on_source_error: false``
+when fail-fast behavior is preferred.
 
 Scientific limitations remain. The software still divides only voxels already in
 the parent SoFiA mask, assigns each voxel wholly to one child, and can mistake
@@ -206,8 +219,8 @@ SoFiA products. The new controls and QA plots make decisions more manageable and
 auditable; they do not remove the need for scientific review or the requirement to
 work on a complete copy.
 
-Commit-by-commit map
---------------------
+Fork addition history
+---------------------
 
 * ``638f517`` — source-ID filtering, validation, initial full user guide, and
   source-selection tests.

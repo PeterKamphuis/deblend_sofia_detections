@@ -1,0 +1,72 @@
+cff-version: 1.2.0
+message: >-
+  If you use this fork in scientific work, please cite the exact software
+  version, Peter Kamphuis's original deblend_sofia_detections project, and
+  Huang et al. (2025), as described in the README and documentation.
+title: deblend-sofia-detections
+type: software
+version: 1.0.0
+date-released: 2026-08-04
+commit: d78fa1b6ebf9d994044923d5b064df3cccf67b5d
+authors:
+  - family-names: Maina
+    given-names: Eric
+repository-code: https://github.com/3rico/deblend_sofia_detections
+license: GPL-3.0-or-later
+references:
+  - type: software
+    title: deblend_sofia_detections
+    version: 0.0.4
+    date-released: 2026-05-05
+    commit: a6daef3d7630f913809fd27d2fb39c85de7c200c
+    authors:
+      - family-names: Kamphuis
+        given-names: Peter
+    repository-code: https://github.com/PeterKamphuis/deblend_sofia_detections
+  - type: article
+    title: >-
+      WALLABY Pilot Survey: Star Formation Enhancement and Suppression in
+      Gas-rich Galaxy Pairs
+    authors:
+      - family-names: Huang
+        given-names: Qifeng
+      - family-names: Wang
+        given-names: Jing
+      - family-names: Lin
+        given-names: Xuchen
+      - family-names: Oh
+        given-names: Se-Heon
+      - family-names: Chen
+        given-names: Xinkai
+      - family-names: Catinella
+        given-names: Barbara
+      - family-names: Deg
+        given-names: Nathan
+      - family-names: Dénes
+        given-names: Helga
+      - family-names: For
+        given-names: Bi-Qing
+      - family-names: Koribalski
+        given-names: Baerbel
+      - family-names: Lee-Waddell
+        given-names: Karen
+      - family-names: Rhee
+        given-names: Jonghwan
+      - family-names: Shen
+        given-names: Austin
+      - family-names: Shao
+        given-names: Li
+      - family-names: Spekkens
+        given-names: Kristine
+      - family-names: Staveley-Smith
+        given-names: Lister
+      - family-names: Westmeier
+        given-names: Tobias
+      - family-names: Wong
+        given-names: O. Ivy
+      - family-names: Bosma
+        given-names: Albert
+    journal: The Astrophysical Journal
+    volume: 980
+    year: 2025
+    doi: 10.3847/1538-4357/ad9579

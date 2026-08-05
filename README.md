@@ -1,44 +1,51 @@
 # deblend-sofia-detections
 
-## Changes from PeterKamphuis/deblend_sofia_detections
+## Project lineage and additions in this fork
 
-This repository is an enhanced fork of
-[`PeterKamphuis/deblend_sofia_detections`](https://github.com/PeterKamphuis/deblend_sofia_detections).
-It retains the upstream watershed-deblending method and SoFiA product layout, but
-adds operational controls, failure isolation, optical-input handling, and
-scientific QA products needed for controlled work on large fields.
+This repository builds on
+[`PeterKamphuis/deblend_sofia_detections`](https://github.com/PeterKamphuis/deblend_sofia_detections),
+created and maintained by Peter Kamphuis. We are grateful to Peter for developing
+the original package, making it openly available, and providing the implementation
+and project structure on which this fork depends. The underlying watershed method
+also follows the work of Qifeng Huang and collaborators, credited below.
 
-### Comparison scope
+The purpose of this section is attribution and version clarity. It records which
+options and support tools were added in this fork so users can choose the correct
+documentation for the code they are running. These notes are descriptive rather
+than evaluative: the additions reflect the needs of a particular large-field
+deblending workflow and are not assumed to be preferable for every use case.
 
-This comparison is deliberately pinned to reproducible Git revisions:
+### Version scope
 
-| Repository state | Revision | Meaning |
+The notes are pinned to reproducible Git revisions:
+
+| Project state | Revision | Role in this documentation |
 | --- | --- | --- |
-| Upstream baseline | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Current upstream `main` baseline used by this fork. |
-| This fork | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Last committed fork release covered by this section. |
+| Peter Kamphuis's original project | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Foundation and reference revision from which this fork developed. |
+| This fork | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Last committed fork release covered by these addition notes. |
 
-The list below describes committed differences through `v1.0.0`. Work that has
-not yet been committed and tagged is intentionally excluded; add it here when it
+Only committed additions through `v1.0.0` are described. Work that has not yet
+been committed and tagged is intentionally excluded; it should be added when it
 becomes part of a reproducible repository revision.
 
-### User-visible differences at a glance
+### Additions maintained in this fork
 
-| Area | Upstream `v0.0.4` | This fork `v1.0.0` |
-| --- | --- | --- |
-| Source selection | Processes every catalogue source. | Adds `input.source_ids`, an optional validated allowlist for running only known candidate blends. |
-| Failure behavior | An uncaught source-level exception ends the field run. | Continues with later sources by default, records a traceback-rich failure report, and offers fail-fast behavior. |
-| Optical/catalogue QA | Primarily writes intermediate FITS masks and console diagnostics. | Adds per-source PNG overlays and ECSV records tying optical detections, catalogue positions, the parent H I footprint, moment-0 structure, and trial child components together. |
-| Manual optical FITS input | Assumes a directly usable 2-D image. | Accepts RGB and other multi-plane FITS data, identifies celestial axes from WCS, collapses non-celestial axes, and reports clearer input errors. |
-| Standalone optical conversion | No dedicated conversion utility. | Adds `scripts/convert_optical_fits_to_2d.py` with mean, median, or first-plane collapse modes and safe output handling. |
-| Marker control | Automatic optical detections and manual catalogue markers are combined. | Adds `input.manual_markers_only`, allowing a vetted catalogue to be the watershed-marker allowlist while retaining automatic detections for QA. |
-| Documentation and tests | Short installation and configuration notes. | Adds a full operational guide and regression tests for selection, failure reports, visual QA, optical-axis handling, conversion CLI behavior, and manual marker selection. |
+| Area | Addition and intended use |
+| --- | --- |
+| Source selection | `input.source_ids` provides an optional validated allowlist for controlled trials on known candidate blends. |
+| Failure handling | Source-level exceptions can be recorded while later sources continue, with an option to retain fail-fast behavior. |
+| Optical/catalogue QA | Per-source PNG overlays and ECSV records connect optical detections, catalogue positions, the parent H I footprint, moment-0 structure, and trial child components. |
+| Manual optical FITS input | RGB and other multi-plane FITS data can be reduced to 2-D by identifying celestial axes from WCS and collapsing the remaining axes. |
+| Standalone optical conversion | `scripts/convert_optical_fits_to_2d.py` provides mean, median, or first-plane collapse modes with guarded output handling. |
+| Marker control | `input.manual_markers_only` allows a vetted catalogue to define watershed seeds while automatic detections remain available as QA context. |
+| Documentation and tests | The fork includes an operational guide and focused regression tests for its version-specific controls and QA paths. |
 
-### Detailed behavior added by this fork
+### Detailed addition notes
 
 1. **Targeted source-ID runs.** Set `input.source_ids` to quoted SoFiA catalogue
    IDs such as `["42", "57"]`. The selection is validated before optical-image or
    cubelet processing, follows catalogue order, and processes duplicate requested
-   IDs once. An empty list preserves the upstream all-source loop. If a selected
+   IDs once. An empty list preserves the original all-source loop. If a selected
    split is accepted, the final re-parameterisation still operates on the complete
    field mask so unchanged detections remain in the field catalogue.
 
@@ -47,7 +54,7 @@ becomes part of a reproducible repository revision.
    which is the fork default. Each run rewrites
    `Watershed_Output/deblend_failures.log` with requested, successful, and failed
    counts plus the source ID, cubelet path, exception type, reason, and traceback.
-   Set the option to `false` to recover fail-fast behavior.
+   Set the option to `false` when fail-fast behavior is preferred.
 
 3. **Two complementary QA overlays.** With `general.debug: true`,
    `optical_hi_catalogue_overlay_source_<ID>.png` shows the optical background,
@@ -80,7 +87,7 @@ becomes part of a reproducible repository revision.
    and troubleshooting. Focused unit tests cover each fork-specific helper and QA
    path.
 
-### What remains the same
+### Foundations retained from the original project
 
 The core scientific intent is unchanged: the program starts from an existing
 SoFiA detection, proposes integer child labels inside the parent mask, asks SoFiA
@@ -88,16 +95,16 @@ to measure those labels, checks counterparts, updates the master mask when a spl
 survives, and finally re-parameterises the full field. The fork does not make
 deblending scientifically automatic, does not discover unmasked H I emission, and
 does not make the workflow non-destructive. The copied-workspace warning below
-applies equally to upstream and fork versions.
+applies equally to the original project and this fork.
 
-For the same behavior as upstream on the new controls, leave `input.source_ids`
-empty and `input.manual_markers_only` false. Set
+For the original broad all-source workflow on the new controls, leave
+`input.source_ids` empty and `input.manual_markers_only` false. Set
 `general.continue_on_source_error: false` if the run must stop at the first
 source-level exception. Debug overlays are only created when `general.debug` is
 enabled.
 
 The corresponding documentation page is
-[Changes from upstream](docs/source/Fork_Differences.rst).
+[Project lineage and fork additions](docs/source/Fork_Differences.rst).
 
 ## Package overview
 
@@ -257,10 +264,11 @@ python -m pip install --upgrade pip
 python -m pip install deblend_sofia_detections
 ```
 
-For development from this repository:
+To use the fork-specific additions, install this repository rather than the PyPI
+release of the original project:
 
 ```bash
-git clone https://github.com/PeterKamphuis/deblend_sofia_detections.git
+git clone https://github.com/3rico/deblend_sofia_detections.git
 cd deblend_sofia_detections
 python3.11 -m venv .venv
 source .venv/bin/activate
@@ -865,6 +873,41 @@ Use `source_ids` to validate a small candidate list first. Disable debug product
 after the workflow is understood, reuse cached optical/table products, and only
 then expand to the complete catalogue.
 
+## Citing and acknowledging the software
+
+Thank you for giving scientific credit to the people whose work made this package
+possible. If this fork contributes to a paper, please cite:
+
+1. **The exact version of this fork used in the analysis.** For `v1.0.0`:
+   Maina, E. (2026), *deblend-sofia-detections*, Version 1.0.0 [Computer
+   software], https://github.com/3rico/deblend_sofia_detections.
+2. **Peter Kamphuis's original package**, which provided the software foundation:
+   Kamphuis, P. (2026), *deblend_sofia_detections*, Version 0.0.4 [Computer
+   software], https://github.com/PeterKamphuis/deblend_sofia_detections.
+3. **The scientific method paper** when the watershed-deblending workflow supports
+   the analysis: Huang, Q., Wang, J., Lin, X., et al. (2025), “WALLABY Pilot
+   Survey: Star Formation Enhancement and Suppression in Gas-rich Galaxy Pairs,”
+   *The Astrophysical Journal*, 980, 157,
+   https://doi.org/10.3847/1538-4357/ad9579.
+
+Suggested methods wording:
+
+> H I detections were deblended with `deblend-sofia-detections` v1.0.0
+> (Maina 2026), a fork of Peter Kamphuis's `deblend_sofia_detections` v0.0.4
+> (Kamphuis 2026), using the watershed-deblending approach described by Huang et
+> al. (2025).
+
+Suggested acknowledgement:
+
+> We thank Peter Kamphuis for creating and openly sharing the original
+> `deblend_sofia_detections` package on which this fork is based.
+
+The repository includes machine-readable [`CITATION.cff`](CITATION.cff) metadata.
+Full paper-ready references and BibTeX are provided in the
+[citation guide](docs/source/Citing.rst). Adapt the formatting to the target
+journal, but retain the software author, title, version, year, and URL. When using
+an unreleased checkout, also record the full Git commit hash.
+
 ## Reproducibility checklist
 
 Before a production run, record:
@@ -881,12 +924,13 @@ Before a production run, record:
 ## Further documentation and development status
 
 - [Advanced configuration reference](docs/source/Advanced.rst)
+- [Citation and acknowledgement guide](docs/source/Citing.rst)
+- [Original project by Peter Kamphuis](https://github.com/PeterKamphuis/deblend_sofia_detections)
 - [SoFiA-2 project](https://gitlab.com/SoFiA-Admin/SoFiA-2)
 - [Method paper](https://ui.adsabs.harvard.edu/abs/2025ApJ...980..157H/abstract)
 
-The package is currently marked beta. Most of the implementation is adapted from
-the workflow accompanying the method paper, and Qifeng Huang should be considered
-a principal author of the underlying method and code lineage.
+The package is currently marked beta. Its software and scientific provenance is
+recorded in the lineage and citation sections above.
 
 Bug reports and focused improvements are welcome through the
-[GitHub repository](https://github.com/PeterKamphuis/deblend_sofia_detections).
+[fork repository](https://github.com/3rico/deblend_sofia_detections).
