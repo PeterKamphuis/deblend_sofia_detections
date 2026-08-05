@@ -14,6 +14,16 @@ class Input:
     # Optional allowlist of SoFiA catalogue IDs. An empty list processes every detection.
     source_ids: List[str] = field(default_factory=list)
     manual_input_tables:  List = field(default_factory=lambda: [None])
+    # Query the public Legacy Surveys DR10 Tractor catalogue only when no manual
+    # input catalogue was supplied.
+    auto_query_catalogue: bool = False
+    # DR10 Tractor morphology types that may represent galaxies.
+    galaxy_types: List[str] = field(
+        default_factory=lambda: ['REX', 'EXP', 'DEV', 'SER']
+    )
+    # Optionally require an automatically selected DR10 marker's exact optical
+    # segmentation region to contain a positive, beam-scale moment-0 peak.
+    filter_dr10_markers_by_moment0_peaks: bool = False
     # If True, only manual catalogue positions seed optical watershed runs.
     # Automatic optical detections remain available as debug diagnostics.
     manual_markers_only: bool = False
@@ -64,6 +74,7 @@ class Internal:
     image_counter: int = 0
     optical_background: str = MISSING
     cleaned_optical_background: str = MISSING
+    auto_catalogue_path: Optional[str] = None
     optical_kernel_fwhm: float = 3.
     sofia: str = 'sofia'
 @dataclass

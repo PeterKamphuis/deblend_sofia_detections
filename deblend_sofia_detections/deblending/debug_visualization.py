@@ -9,6 +9,7 @@ PURPLE = "#8b2a8d"
 CONTOUR_PURPLE = "#d8b4fe"
 OPTICAL_MARKER_COLOUR = "#35e6e6"
 CATALOGUE_COLOUR = "#ffd400"
+REJECTED_CATALOGUE_COLOUR = "#ff5a5f"
 
 
 def _normalise_component_id(value):
@@ -184,6 +185,9 @@ def catalogue_positions_from_table(table, catalogue="Manual input"):
         or _column_name(table, "Object Name")
         or _column_name(table, "ID")
     )
+    peak_supported_column = _column_name(
+        table, "moment0_peak_supported"
+    )
     positions = []
     for index, row in enumerate(table):
         try:
@@ -198,27 +202,33 @@ def catalogue_positions_from_table(table, catalogue="Manual input"):
             if name_column is not None
             else f"{catalogue} source {index + 1}"
         )
-        positions.append(
-            {
-                "ra_deg": ra,
-                "dec_deg": dec,
-                "name": name,
-                "catalogue": catalogue,
-            }
-        )
+        position = {
+            "ra_deg": ra,
+            "dec_deg": dec,
+            "name": name,
+            "catalogue": catalogue,
+        }
+        if peak_supported_column is not None:
+            position["marker_status"] = (
+                "accepted"
+                if bool(row[peak_supported_column])
+                else "rejected"
+            )
+        positions.append(position)
     return positions
 
 
 def matched_counterpart_positions(match_table):
-    """Extract the manual/NED counterpart selected for one trial SoFiA source."""
+    """Extract the manual, DR10, or NED match for one trial SoFiA source."""
     if match_table is None or not hasattr(match_table, "colnames"):
         return []
-    for prefix, catalogue, name_column in (
-        ("Manual", "Manual match", "Manual_Name"),
-        ("NED", "NED match", "NED_Object Name"),
+    for prefix, catalogue, name_column, confirmation_name in (
+        ("Manual", "Manual match", "Manual_Name", "Manual_spectroscopic"),
+        ("DR10", "Legacy Surveys DR10 match", "DR10_Name", "DR10_counterpart"),
+        ("NED", "NED match", "NED_Object Name", "NED_spectroscopic"),
     ):
         confirmed_column = _column_name(
-            match_table, f"{prefix}_spectroscopic"
+            match_table, confirmation_name
         )
         if confirmed_column is None:
             continue
@@ -261,6 +271,8 @@ def deduplicate_positions(positions, tolerance_degrees=1e-7):
                 "name": str(position.get("name", "Catalogue source")),
                 "catalogue": str(position.get("catalogue", "Catalogue")),
             }
+            if position.get("marker_status") in ("accepted", "rejected"):
+                candidate["marker_status"] = position["marker_status"]
         except (KeyError, TypeError, ValueError):
             continue
         if not np.isfinite(candidate["ra_deg"]) or not np.isfinite(
@@ -459,16 +471,25 @@ def write_source_debug_overlay(
             position["dec_deg"] * u.deg,
             frame="icrs",
         )
+        rejected = position.get("marker_status") == "rejected"
+        scatter_options = {
+            "marker": "x" if rejected else "o",
+            "s": 78 if rejected else 70,
+            "color": (
+                REJECTED_CATALOGUE_COLOUR
+                if rejected
+                else CATALOGUE_COLOUR
+            ),
+            "linewidth": 1.6 if rejected else 0.8,
+            "zorder": 6,
+        }
+        if not rejected:
+            scatter_options["edgecolor"] = "#191919"
         axes.scatter(
             coordinate.ra.deg,
             coordinate.dec.deg,
             transform=world_transform,
-            marker="o",
-            s=70,
-            color=CATALOGUE_COLOUR,
-            edgecolor="#191919",
-            linewidth=0.8,
-            zorder=6,
+            **scatter_options,
         )
         axes.annotate(
             position["name"],
@@ -477,7 +498,11 @@ def write_source_debug_overlay(
             xytext=(6, 6),
             textcoords="offset points",
             fontsize=7,
-            color=CATALOGUE_COLOUR,
+            color=(
+                REJECTED_CATALOGUE_COLOUR
+                if rejected
+                else CATALOGUE_COLOUR
+            ),
             bbox={
                 "boxstyle": "round,pad=0.2",
                 "facecolor": "#191919",
@@ -519,7 +544,17 @@ def write_source_debug_overlay(
                 label="Detected optical source",
             )
         )
-    if plotted_positions:
+    accepted_positions = [
+        position
+        for position in plotted_positions
+        if position.get("marker_status") != "rejected"
+    ]
+    rejected_positions = [
+        position
+        for position in plotted_positions
+        if position.get("marker_status") == "rejected"
+    ]
+    if accepted_positions:
         legend_items.append(
             Line2D(
                 [0],
@@ -529,10 +564,23 @@ def write_source_debug_overlay(
                 markerfacecolor=CATALOGUE_COLOUR,
                 markeredgecolor="#191919",
                 markersize=7,
-                label="Catalogue position",
+                label="Accepted catalogue position",
             )
         )
-    else:
+    if rejected_positions:
+        legend_items.append(
+            Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="none",
+                markeredgecolor=REJECTED_CATALOGUE_COLOUR,
+                markeredgewidth=1.6,
+                markersize=7,
+                label="Rejected by moment-0 peak filter",
+            )
+        )
+    if not plotted_positions:
         axes.text(
             0.02,
             0.02,
@@ -755,16 +803,25 @@ def write_hi_component_debug_overlay(
             position["dec_deg"] * u.deg,
             frame="icrs",
         )
+        rejected = position.get("marker_status") == "rejected"
+        scatter_options = {
+            "marker": "x" if rejected else "o",
+            "s": 78 if rejected else 70,
+            "color": (
+                REJECTED_CATALOGUE_COLOUR
+                if rejected
+                else CATALOGUE_COLOUR
+            ),
+            "linewidth": 1.6 if rejected else 0.8,
+            "zorder": 7,
+        }
+        if not rejected:
+            scatter_options["edgecolor"] = "#191919"
         axes.scatter(
             coordinate.ra.deg,
             coordinate.dec.deg,
             transform=world_transform,
-            marker="o",
-            s=70,
-            color=CATALOGUE_COLOUR,
-            edgecolor="#191919",
-            linewidth=0.8,
-            zorder=7,
+            **scatter_options,
         )
         axes.annotate(
             position["name"],
@@ -773,7 +830,11 @@ def write_hi_component_debug_overlay(
             xytext=(6, 6),
             textcoords="offset points",
             fontsize=7,
-            color=CATALOGUE_COLOUR,
+            color=(
+                REJECTED_CATALOGUE_COLOUR
+                if rejected
+                else CATALOGUE_COLOUR
+            ),
             bbox={
                 "boxstyle": "round,pad=0.2",
                 "facecolor": "#191919",
@@ -895,7 +956,17 @@ def write_hi_component_debug_overlay(
                 label="Detected optical source",
             )
         )
-    if plotted_positions:
+    accepted_positions = [
+        position
+        for position in plotted_positions
+        if position.get("marker_status") != "rejected"
+    ]
+    rejected_positions = [
+        position
+        for position in plotted_positions
+        if position.get("marker_status") == "rejected"
+    ]
+    if accepted_positions:
         legend_items.append(
             Line2D(
                 [0],
@@ -905,7 +976,20 @@ def write_hi_component_debug_overlay(
                 markerfacecolor=CATALOGUE_COLOUR,
                 markeredgecolor="#191919",
                 markersize=7,
-                label="Catalogue position",
+                label="Accepted catalogue position",
+            )
+        )
+    if rejected_positions:
+        legend_items.append(
+            Line2D(
+                [0],
+                [0],
+                marker="x",
+                color="none",
+                markeredgecolor=REJECTED_CATALOGUE_COLOUR,
+                markeredgewidth=1.6,
+                markersize=7,
+                label="Rejected by moment-0 peak filter",
             )
         )
     legend_items.extend(component_legend_items)

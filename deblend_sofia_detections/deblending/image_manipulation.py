@@ -343,7 +343,7 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
                 np.isnan(src_table["PA"][i])]):
             continue
         
-        sma = 10* pixel_scale.to(u.arcsec).value
+        sma = 10 * pixel_scale.to(u.arcsec)
         for size in maj_sizes:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):
@@ -396,7 +396,7 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 
 def split_sources(cfg_in,cube_name, mask, 
         outdir='./', catalogue = False, counterpart_positions=None,
-        debug_overlay=None):
+        automatic_counterpart_table=None, debug_overlay=None):
     """
     Split the sources in the deblended 3D data cube.
     
@@ -482,6 +482,15 @@ def split_sources(cfg_in,cube_name, mask,
             source = search_counter_part(cfg,source,basename=watername,
                 query = 'NED',sofia_directory=f'{outdir}/Sofia_Output/',
                 insource='sofia')
+
+            source = search_counter_part(
+                cfg,
+                source,
+                basename=watername,
+                query='DR10',
+                sofia_directory=f'{outdir}/Sofia_Output/',
+                automatic_catalogue=automatic_counterpart_table,
+            )
          
             source = search_counter_part(cfg,source,basename=watername,
                     query='Manual',sofia_directory=f'{outdir}/Sofia_Output/')
@@ -493,6 +502,8 @@ def split_sources(cfg_in,cube_name, mask,
           
             if source['Manual_spectroscopic']:
                 source['Name'] =  source['Manual_Name'][0]
+            elif source['DR10_counterpart']:
+                source['Name'] = source['DR10_Name'][0]
             elif source['NED_spectroscopic']:
                 source['Name'] =  source['NED_Object Name'][0]  
             else:

@@ -1,4 +1,9 @@
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical
+from deblend_sofia_detections.catalogue.dr10 import \
+    filter_dr10_counterparts_by_moment0_peaks,\
+    has_manual_catalogue,load_dr10_catalogue,prepare_dr10_catalogue,\
+    remove_rejected_optical_regions,select_dr10_counterparts,\
+    write_moment0_peak_filter_debug_products
 from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
     mask_source_from_table,add_to_original
@@ -319,6 +324,7 @@ def deblend_sofia_detections(cfg):
         if cfg.general.verbose:
             print(f"Creating the full FOV optical image for {cfg.sofia.original_data_cube}.")
         creating_full_FOV_optical(cfg)
+    prepare_dr10_catalogue(cfg)
    
     cubelets_dir = f'{cfg.sofia.directory}/{cfg.sofia.basename}_cubelets/'
     max_source_id_original = np.max([int(x) for x in sources['id']])
@@ -446,6 +452,64 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
 
     return masked_deb,optical_image[0].header,hi_mask
 
+
+def gaia_debug_product_paths(cfg, source_id):
+    """Return the per-source paths for Gaia masking diagnostics."""
+    debug_directory = join_path(
+        cfg.directories.watershed_directory,
+        f'watershed_source_{source_id}/debug_products/',
+    )
+    return {
+        'masked_background': join_path(
+            debug_directory,
+            f'background_gaia_masked_source_{source_id}.fits',
+        ),
+        'binary_mask': join_path(
+            debug_directory,
+            f'gaia_star_mask_source_{source_id}.fits',
+        ),
+    }
+
+
+def write_gaia_debug_products(
+        cfg, source_id, masked_background, gaia_mask, optical_wcs,
+        query_succeeded=True):
+    """Write the masked optical cutout and binary Gaia mask for one source."""
+    if not cfg.general.debug:
+        return {}
+
+    product_paths = gaia_debug_product_paths(cfg, source_id)
+    os.makedirs(
+        os.path.dirname(product_paths['masked_background']), exist_ok=True
+    )
+    debug_header = optical_wcs.to_header()
+    masked_pixels = int(np.count_nonzero(gaia_mask))
+    debug_header['GAIA_OK'] = (
+        bool(query_succeeded), 'Gaia DR3 query and mask creation succeeded'
+    )
+    debug_header['MASKNPIX'] = (
+        masked_pixels, 'Number of pixels in the Gaia star mask'
+    )
+    debug_header['MASKFRAC'] = (
+        float(masked_pixels / gaia_mask.size),
+        'Fraction of cutout pixels in the Gaia star mask',
+    )
+    fits.writeto(
+        product_paths['masked_background'],
+        masked_background,
+        header=debug_header,
+        overwrite=True,
+    )
+    mask_header = debug_header.copy()
+    mask_header['BUNIT'] = 'boolean'
+    fits.writeto(
+        product_paths['binary_mask'],
+        np.asarray(gaia_mask, dtype=np.uint8),
+        header=mask_header,
+        overwrite=True,
+    )
+    return product_paths
+
 def prepare_background_optical_image(cfg,data,source_id = 'unknown'):
     """ Prepare the background optical image for the deblending on optical sources."""
     #First we set the cleaned name for this source
@@ -479,7 +543,7 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown'):
                     correct_cleaned_image = False
                     break
             else:
-                if np.isclose(optical_image_header[elem],tmp[elem]):
+                if not np.isclose(optical_image_header[elem],tmp[elem]):
                     if cfg.general.verbose:
                         print(f"The WCS of the cleaned optical image does not match the WCS of the original optical image. We will use the original optical image for the deblending on optical sources.")
                         print(f"Element {elem} does not match: {optical_image_header[elem]} != {tmp[elem]}")
@@ -492,6 +556,19 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown'):
             correct_cleaned_image = False
             if cfg.general.verbose:
                 print(f"The cleaned optical image is not masked for Gaia stars, so we will not use it for the deblending on optical sources.")
+        if correct_cleaned_image and cfg.general.debug:
+            debug_products = gaia_debug_product_paths(cfg, source_id)
+            missing_debug_products = [
+                path for path in debug_products.values()
+                if not os.path.isfile(path)
+            ]
+            if missing_debug_products:
+                correct_cleaned_image = False
+                if cfg.general.verbose:
+                    print(
+                        "The cached cleaned optical image has no per-source "
+                        "Gaia debug products, so the Gaia mask will be rebuilt."
+                    )
            
         # if its the same we do not have to continue to clean it        
         if correct_cleaned_image:
@@ -525,11 +602,19 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown'):
     if cfg.general.verbose:
         print("Applying a gaia mask for the optical image.")
     masked_bckgrnd[gaia_mask] = np.nan  # Mask Gaia stars in the optical image
-    close_variables(gaia_mask,bckgrnd,bckgrnd_wcs)    
     if cfg.general.debug:
+        write_gaia_debug_products(
+            cfg,
+            source_id,
+            masked_bckgrnd,
+            gaia_mask,
+            masked_bckgrnd_wcs,
+            query_succeeded=not no_gaia_mask,
+        )
         fits.writeto(f'{cfg.directories.ancillary_directory}debug_products/background_gaia_masked_sfs{source_id}_debug_image_{cfg.internal.image_counter}.fits',
             masked_bckgrnd,header=masked_bckgrnd_wcs.to_header(),overwrite=True)
         cfg.internal.image_counter += 1   
+    close_variables(gaia_mask,bckgrnd,bckgrnd_wcs)
 
     # subtracting the background from the optical image
     if cfg.general.verbose:
@@ -566,7 +651,7 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown'):
     else:
         final_optical_header['GAIA_MASKED'] = True
     fits.writeto(cfg.internal.cleaned_optical_background, data_smooth, 
-        header=cleaned_optical_wcs.to_header(), overwrite=True)
+        header=final_optical_header, overwrite=True)
     
 
 def load_data(base_name=None,cube_name = None,
@@ -745,9 +830,17 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         print(f"Found {no_source} sources in run_watershed.\n")
     return segments
 
-def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
+def set_optical_markers(
+    cfg,
+    sofia_id,
+    mask,
+    diagnostics=None,
+    moment0_data=None,
+    moment0_header=None,
+    debug_directory=None,
+):
     if cfg.input.manual_markers_only and \
-            cfg.input.manual_input_tables[0] is None:
+            not has_manual_catalogue(cfg):
         raise InputError(
             "input.manual_markers_only=true requires at least one "
             "manual input table."
@@ -763,8 +856,10 @@ def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
             detected_optical_markers
         ).filled(0).copy()
         diagnostics['catalogue_positions'] = []
+        diagnostics['automatic_counterpart_table'] = None
+        diagnostics['marker_mode'] = "automatic optical detections"
     # and we want to add any source we know to exist
-    if not cfg.input.manual_input_tables[0] is None:
+    if has_manual_catalogue(cfg):
         if cfg.general.verbose:
             print("Adding the manual optical source table.")
             if cfg.input.manual_markers_only:
@@ -779,6 +874,11 @@ def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
                     source_table, catalogue="Manual input"
                 )
             )
+            diagnostics['marker_mode'] = (
+                "manual catalogue only"
+                if cfg.input.manual_markers_only
+                else "automatic + manual catalogue"
+            )
         marker_base = catalogue_marker_base(
             detected_optical_markers,
             manual_markers_only=cfg.input.manual_markers_only,
@@ -786,6 +886,92 @@ def set_optical_markers(cfg,sofia_id, mask, diagnostics=None):
         optical_markers = mask_source_from_table(cfg, marker_base,
             detected_optical_markers_header, src_table=source_table,
             mask= used_mask)   
+    elif cfg.input.auto_query_catalogue:
+        if cfg.internal.auto_catalogue_path is None:
+            raise InputError(
+                "input.auto_query_catalogue=true but no downloaded DR10 "
+                "catalogue path was prepared."
+            )
+        full_catalogue = load_dr10_catalogue(
+            cfg.internal.auto_catalogue_path
+        )
+        selected_table = select_dr10_counterparts(
+            full_catalogue,
+            detected_optical_markers,
+            detected_optical_markers_header,
+            used_mask,
+            cfg.input.galaxy_types,
+        )
+        source_table = selected_table
+        marker_base = detected_optical_markers
+        audit_table = None
+        if getattr(
+            cfg.input, "filter_dr10_markers_by_moment0_peaks", False
+        ):
+            if moment0_data is None or moment0_header is None:
+                raise InputError(
+                    "input.filter_dr10_markers_by_moment0_peaks=true requires "
+                    "the loaded parent moment-0 image and header."
+                )
+            source_table, audit_table, peak_map = (
+                filter_dr10_counterparts_by_moment0_peaks(
+                    selected_table,
+                    detected_optical_markers,
+                    detected_optical_markers_header,
+                    moment0_data,
+                    moment0_header,
+                    mask,
+                )
+            )
+            marker_base = remove_rejected_optical_regions(
+                detected_optical_markers, audit_table
+            )
+            if cfg.general.debug:
+                if debug_directory is None:
+                    debug_directory = (
+                        f"{cfg.directories.ancillary_directory}/debug_products"
+                    )
+                write_moment0_peak_filter_debug_products(
+                    debug_directory,
+                    sofia_id,
+                    moment0_data,
+                    moment0_header,
+                    peak_map,
+                    audit_table,
+                )
+            if cfg.general.verbose:
+                rejected_count = len(audit_table) - len(source_table)
+                print(
+                    "The parent moment-0 peak filter retained "
+                    f"{len(source_table)} and rejected {rejected_count} "
+                    "selected DR10 counterpart(s)."
+                )
+        if cfg.general.verbose:
+            print(
+                f"Selected {len(source_table)} Legacy Surveys DR10 "
+                "watershed counterpart(s), at most one per optical detection."
+            )
+        if diagnostics is not None:
+            diagnostics['catalogue_positions'].extend(
+                catalogue_positions_from_table(
+                    audit_table if audit_table is not None else source_table,
+                    catalogue="Legacy Surveys DR10",
+                )
+            )
+            diagnostics['automatic_counterpart_table'] = source_table
+            diagnostics['marker_mode'] = (
+                "automatic + Legacy Surveys DR10 catalogue"
+            )
+            if audit_table is not None:
+                diagnostics['marker_mode'] += " + moment-0 peak filter"
+                diagnostics['dr10_moment0_peak_filter_audit'] = audit_table
+        optical_markers = mask_source_from_table(
+            cfg,
+            marker_base,
+            detected_optical_markers_header,
+            src_table=source_table,
+            mask=used_mask,
+        )
     else:
         optical_markers = detected_optical_markers
 
@@ -871,6 +1057,9 @@ def watershed_deblending(cfg_in, cube_name = None,
             sofia_id,
             mask[0].data,
             diagnostics=marker_diagnostics,
+            moment0_data=mom0[0].data if mom0 is not None else None,
+            moment0_header=mom0[0].header if mom0 is not None else None,
+            debug_directory=f"{outdir}debug_products",
         )
         catalogue_positions.extend(
             marker_diagnostics.get('catalogue_positions', [])
@@ -885,10 +1074,8 @@ def watershed_deblending(cfg_in, cube_name = None,
                     'detected_optical_markers', optical_markers
                 ),
                 'catalogue_positions': catalogue_positions,
-                'marker_mode': (
-                    "manual catalogue only"
-                    if cfg.input.manual_markers_only
-                    else "automatic + manual catalogue"
+                'marker_mode': marker_diagnostics.get(
+                    'marker_mode', "automatic optical detections"
                 ),
                 'output_name': (
                     f"{outdir}debug_products/"
@@ -965,11 +1152,14 @@ def watershed_deblending(cfg_in, cube_name = None,
             final_mask_name,
             outdir=outdir,
             counterpart_positions=catalogue_positions,
+            automatic_counterpart_table=marker_diagnostics.get(
+                'automatic_counterpart_table'
+            ) if optical_deblending else None,
             debug_overlay=debug_overlay,
         )  # skip the background
         if debug_overlay is not None:
             # Counterpart matching happens in split_sources. Rewrite the same
-            # plot so accepted manual/NED matches appear as yellow points.
+            # plot so accepted manual/DR10/NED matches appear as yellow points.
             debug_overlay['catalogue_positions'] = catalogue_positions
             write_source_debug_overlay_safely(**debug_overlay)
         # If we are running as a larger sofia run update the catalogue and cubelets

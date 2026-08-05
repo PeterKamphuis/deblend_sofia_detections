@@ -172,6 +172,62 @@ class DebugVisualizationTests(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_source_overlay_renders_accepted_and_rejected_dr10_positions(self):
+        from astropy.io import fits
+        from astropy.table import Table
+        from astropy.wcs import WCS
+
+        with TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            wcs = WCS(naxis=2)
+            wcs.wcs.crpix = [10.0, 10.0]
+            wcs.wcs.cdelt = np.array([-0.001, 0.001])
+            wcs.wcs.crval = [10.0, -20.0]
+            wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+            header = wcs.to_header()
+            optical_name = directory / "optical.fits"
+            fits.PrimaryHDU(
+                np.arange(400, dtype=float).reshape(20, 20),
+                header=header,
+            ).writeto(optical_name)
+            accepted_ra, accepted_dec = wcs.pixel_to_world_values(8, 10)
+            rejected_ra, rejected_dec = wcs.pixel_to_world_values(12, 10)
+            output_name = directory / "overlay.png"
+            catalogue_name = directory / "positions.ecsv"
+
+            result = write_source_debug_overlay_safely(
+                optical_image_name=optical_name,
+                moment0_data=np.arange(400, dtype=float).reshape(20, 20),
+                moment0_header=header,
+                source_mask=np.ones((3, 20, 20)),
+                marker_data=np.zeros((20, 20)),
+                catalogue_positions=[
+                    {
+                        "ra_deg": accepted_ra,
+                        "dec_deg": accepted_dec,
+                        "name": "LS_ACCEPTED",
+                        "catalogue": "Legacy Surveys DR10",
+                        "marker_status": "accepted",
+                    },
+                    {
+                        "ra_deg": rejected_ra,
+                        "dec_deg": rejected_dec,
+                        "name": "LS_REJECTED",
+                        "catalogue": "Legacy Surveys DR10",
+                        "marker_status": "rejected",
+                    },
+                ],
+                output_name=output_name,
+                catalogue_output_name=catalogue_name,
+                source_id="36",
+                marker_mode="automatic + DR10 + moment-0 peak filter",
+            )
+
+            self.assertEqual(result, output_name)
+            self.assertTrue(output_name.is_file())
+            self.assertGreater(output_name.stat().st_size, 0)
+            self.assertEqual(len(Table.read(catalogue_name)), 2)
+
     def test_invalid_child_wcs_does_not_hide_valid_child(self):
         from astropy.io import fits
         from astropy.wcs import WCS
@@ -267,6 +323,37 @@ class DebugVisualizationTests(unittest.TestCase):
             ],
         )
 
+    def test_peak_filter_audit_positions_keep_accepted_rejected_status(self):
+        table = FakeTable(
+            [
+                {
+                    "Name": "LS_ACCEPTED",
+                    "RA": 10.5,
+                    "DEC": -20.25,
+                    "moment0_peak_supported": True,
+                },
+                {
+                    "Name": "LS_REJECTED",
+                    "RA": 10.6,
+                    "DEC": -20.35,
+                    "moment0_peak_supported": False,
+                },
+            ]
+        )
+
+        positions = catalogue_positions_from_table(
+            table, catalogue="Legacy Surveys DR10"
+        )
+
+        self.assertEqual(
+            [position["marker_status"] for position in positions],
+            ["accepted", "rejected"],
+        )
+        self.assertEqual(
+            deduplicate_positions(positions)[1]["marker_status"],
+            "rejected",
+        )
+
     def test_confirmed_manual_match_is_preferred_over_ned_match(self):
         table = FakeTable(
             [
@@ -288,6 +375,28 @@ class DebugVisualizationTests(unittest.TestCase):
         self.assertEqual(len(positions), 1)
         self.assertEqual(positions[0]["name"], "Manual A")
         self.assertEqual(positions[0]["catalogue"], "Manual match")
+
+    def test_dr10_match_is_reported_when_no_manual_match_exists(self):
+        table = FakeTable(
+            [
+                {
+                    "Manual_spectroscopic": False,
+                    "DR10_counterpart": True,
+                    "DR10_RA": 10.25,
+                    "DR10_DEC": -20.5,
+                    "DR10_Name": "LS_1000m200_42",
+                    "NED_spectroscopic": False,
+                }
+            ]
+        )
+
+        positions = matched_counterpart_positions(table)
+
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0]["name"], "LS_1000m200_42")
+        self.assertEqual(
+            positions[0]["catalogue"], "Legacy Surveys DR10 match"
+        )
 
     def test_plotting_failure_is_reported_without_raising(self):
         output = StringIO()

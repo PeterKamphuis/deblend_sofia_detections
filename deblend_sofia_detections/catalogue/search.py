@@ -1,4 +1,5 @@
 from deblend_sofia_detections.support.errors import InputError
+from deblend_sofia_detections.catalogue.dr10 import has_manual_catalogue
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
@@ -138,7 +139,7 @@ def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
 
 
 def find_manual_counterpart(cfg,source,header_info, sysrange=None):
-    if cfg.input.manual_input_tables[0] is None:
+    if not has_manual_catalogue(cfg):
         return  QTable()
     manual_table = read_manual_table(cfg)
 
@@ -161,12 +162,50 @@ def find_manual_counterpart(cfg,source,header_info, sysrange=None):
        search_table = QTable()
    
     return search_table
+
+
+def find_dr10_counterpart(cfg, source, header_info, catalogue_table):
+    """Find the nearest pre-selected DR10 optical counterpart by position."""
+    if catalogue_table is None:
+        catalogue_table = QTable(
+            names=("Name", "RA", "DEC", "type", "flux_g"),
+            dtype=("U80", float, float, "U8", float),
+            units=(None, u.deg, u.deg, None, None),
+        )
+    search_table = copy.deepcopy(catalogue_table)
+    if len(search_table) == 0:
+        for name, unit in (
+            ("Spatial Diff", u.deg),
+            ("Velocity Diff", u.km / u.s),
+            ("Combined Diff", u.dimensionless_unscaled),
+        ):
+            if name not in search_table.colnames:
+                search_table[name] = []
+                search_table[name].unit = unit
+        return search_table
+
+    coordinate_prefix = "sofia_" if "sofia_ra" in source.colnames else ""
+    coordinates = [
+        source[f"{coordinate_prefix}ra"],
+        source[f"{coordinate_prefix}dec"],
+    ]
+    _, radius = set_search_radius(
+        cfg,
+        source,
+        header_info,
+        counterpart_region=cfg.general.counterpart_region,
+    )
+    search_table = sort_on_distance(search_table, coordinates, None)
+    if search_table["Spatial Diff"][0] > 2.0 * radius.to(u.deg):
+        search_table.remove_rows(slice(0, len(search_table)))
+    return search_table
    
 
 
 
 def search_counter_part(cfg,source,sofia_directory= './',
-        basename=None,query ='NED',insource=None,wide_search=False):
+        basename=None,query ='NED',insource=None,wide_search=False,
+        automatic_catalogue=None):
     '''Look for the optical counterpart of the source'''
     if isinstance(source, (Table, QTable)):
         source = source[0]
@@ -193,12 +232,23 @@ def search_counter_part(cfg,source,sofia_directory= './',
             sysrange=150.*u.km/u.s,wide_search=wide_search)
         
         search_id = 'NED'
+        confirmation_column = 'NED_spectroscopic'
         pref =''
     elif query.upper() == 'MANUAL':
         spectroscopic_table = find_manual_counterpart(cfg,source, header_info,
             sysrange=150.*u.km/u.s)  
         search_id = 'Manual'
+        confirmation_column = 'Manual_spectroscopic'
         pref = 'sofia_'
+    elif query.upper() == 'DR10':
+        spectroscopic_table = find_dr10_counterpart(
+            cfg, source, header_info, automatic_catalogue
+        )
+        search_id = 'DR10'
+        confirmation_column = 'DR10_counterpart'
+        pref = 'sofia_'
+    else:
+        raise InputError(f"Unknown counterpart catalogue query: {query}")
     confirmed = True
    
     if check_table_length(spectroscopic_table) > 0 and not (
@@ -212,6 +262,8 @@ def search_counter_part(cfg,source,sofia_directory= './',
             possible_table = find_NED_counterpart(cfg,source, header_info)
         if query.upper() == 'MANUAL':
             possible_table = QTable()
+        if query.upper() == 'DR10':
+            possible_table = QTable()
         new_table = possible_table
         confirmed = False
     #We don't need the searching rows
@@ -223,7 +275,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
         new_table['Object Name'][0] == 'No object Found'):
         new_table=new_table[0:1]
         final_row = combine_tables(new_table,source,column_indicators=[search_id,insource])
-        final_row[f'{search_id}_spectroscopic'] = confirmed
+        final_row[confirmation_column] = confirmed
     else:
         if cfg.general.verbose:
             print(f'We found no {search_id} counterpart for {source[pref+"id"]}')
@@ -245,6 +297,14 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 requested_columns.append(col)
                 requested_dtypes.append(manual_table[col].dtype)
                 requested_units.append(manual_table[col].unit)
+        elif query.upper() == 'DR10':
+            requested_columns = []
+            requested_dtypes = []
+            requested_units = []
+            for col in spectroscopic_table.colnames:
+                requested_columns.append(col)
+                requested_dtypes.append(spectroscopic_table[col].dtype)
+                requested_units.append(spectroscopic_table[col].unit)
         requested_values = []
         for dt in requested_dtypes:
             requested_values.append(get_nan_for_dtype(dt))    
@@ -252,7 +312,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
             ,dtype=requested_dtypes,units = requested_units)
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
-        final_row[f'{search_id}_spectroscopic'] = False
+        final_row[confirmation_column] = False
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')
