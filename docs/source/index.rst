@@ -29,14 +29,15 @@ method developed by Qifeng Huang and collaborators.
 
 For version clarity, the fork-specific notes are pinned from Peter's ``v0.0.4``
 release (``a6daef3``), through this fork's ``v1.0.0`` release (``d78fa1b``), to
-the current ``v1.1.0`` release. They cover
+the ``v1.1.0`` release and current documented development commit ``b215ca0``.
+They cover
 selected-source runs, source-level failure reporting, QA overlays,
 multi-dimensional optical FITS support, a conversion utility, manual-only marker
 control, automatic Legacy Surveys DR10 positional counterparts, optional
 moment-0 support filtering, targeted optical-region deblending, Gaia-mask
-diagnostics, and supporting tests. These notes identify which repository version
-owns each option and are intended as provenance, not as an evaluation of relative
-merit.
+diagnostics, position-velocity QA projections, and supporting tests. These notes
+identify which repository version owns each option and are intended as provenance,
+not as an evaluation of relative merit.
 
 See :doc:`Fork_Differences` for detailed attribution, additions, continuity, and
 compatibility notes. See :doc:`Citing` for paper-ready references, BibTeX, and

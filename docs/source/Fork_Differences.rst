@@ -34,11 +34,13 @@ The notes are intentionally pinned to exact committed states:
 * this fork's previous tagged release, ``v1.0.0``, commit
   `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_;
 * the current release,
-  `v1.1.0 <https://github.com/3rico/deblend_sofia_detections/tree/v1.1.0>`_.
+  `v1.1.0 <https://github.com/3rico/deblend_sofia_detections/tree/v1.1.0>`_;
+* the current documented development implementation, commit
+  `b215ca0 <https://github.com/3rico/deblend_sofia_detections/commit/b215ca0>`_.
 
-Only committed additions included in ``v1.1.0`` are described. Scientific users
-should record and cite this release tag, or the full Git commit when using a later
-untagged checkout.
+Committed additions through ``b215ca0`` are described. Scientific users of the
+post-``v1.1.0`` position-velocity diagnostics should record and cite the full Git
+commit until a later release contains them.
 
 The fork retains the original project's watershed method, SoFiA input-product
 conventions, counterpart-based filtering, master-mask update, and final field
@@ -152,6 +154,21 @@ With ``general.debug: true``, each processed source can receive these new produc
   returned by the first trial SoFiA parameterisation, plus its measured catalogue
   position. These are proposed children before counterpart merging or rejection;
   they are not automatically accepted sources.
+
+With both ``general.debug: true`` and ``general.debug_pv_plots: true``, each of
+those spatial products also has RA-velocity and Dec-velocity forms:
+
+* ``optical_hi_catalogue_pv_ra_velocity_source_<ID>.png``;
+* ``optical_hi_catalogue_pv_dec_velocity_source_<ID>.png``;
+* ``optical_hi_components_pv_ra_velocity_source_<ID>.png``; and
+* ``optical_hi_components_pv_dec_velocity_source_<ID>.png``.
+
+They sum over the orthogonal celestial axis within the parent cubelet, retain the
+same purple/lavender/cyan/yellow/red and per-child colours, and show the masked H I
+PV footprint and contours. Catalogue and optical locations are vertical guides
+because they have no H I velocity; raw SoFiA child centres are plotted at their
+measured velocity. The PV setting defaults to false because it can add four PNGs
+per source to a complete-cluster debug run.
 
 The first QA image is written early and updated after counterpart searches, so it
 often survives a later watershed or trial-SoFiA failure. Visualisation errors are
@@ -384,3 +401,6 @@ Fork addition history
   diagnostics, parameter validation, and focused regression tests.
 * ``v1.1.0`` — packages the documented DR10, targeted optical-deblending, and
   Gaia-diagnostic workflow with corrected release and maintainer metadata.
+* ``b215ca0`` — opt-in RA-velocity and Dec-velocity catalogue and raw-child QA
+  projections, spectral-WCS conversion, non-fatal plotting integration, and
+  focused regression tests.

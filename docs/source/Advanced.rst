@@ -8,8 +8,9 @@ Introduction
 
   We thank Peter Kamphuis for creating and openly sharing the original package on
   which this fork is based. This configuration reference covers the committed
-  ``v1.1.0`` implementation, including automatic DR10 counterparts, targeted
-  optical-region deblending, and Gaia-mask diagnostics. See
+  implementation through ``b215ca0``. Automatic DR10 counterparts, targeted
+  optical-region deblending, and Gaia-mask diagnostics are included in ``v1.1.0``;
+  the position-velocity QA setting is newer than that tag. See
   :doc:`Fork_Differences` for the version-pinned lineage and record the exact
   release or commit used for scientific work.
 
@@ -319,6 +320,31 @@ General Keywords
   ``gaia_star_mask_source_<ID>.fits``. Their headers record ``GAIA_OK``,
   ``MASKNPIX``, and ``MASKFRAC`` so a failed Gaia query can be distinguished from
   a successful query that found no maskable stars.
+
+**debug_pv_plots**:
+
+  *bool, optional, default = False*
+
+  When True together with ``debug``, write RA-velocity and Dec-velocity versions
+  of both the catalogue QA and raw-child component QA plots. This produces up to
+  four additional PNGs per source::
+
+    optical_hi_catalogue_pv_ra_velocity_source_<ID>.png
+    optical_hi_catalogue_pv_dec_velocity_source_<ID>.png
+    optical_hi_components_pv_ra_velocity_source_<ID>.png
+    optical_hi_components_pv_dec_velocity_source_<ID>.png
+
+  The RA-velocity projection sums the cubelet over Declination, and the
+  Dec-velocity projection sums it over Right Ascension. The grayscale parent-cube
+  projection, purple parent-mask footprint, lavender parent H I contours, cyan
+  optical positions, yellow/red catalogue positions, and child colours match the
+  spatial QA style. Optical and catalogue coordinates are vertical guides because
+  DR10 and optical segmentation provide no H I velocity. Raw SoFiA children also
+  receive coloured contours and centre points at their measured velocity. For a
+  frequency spectral axis, ``RESTFRQ`` or ``RESTFREQ`` is required for the radio-
+  velocity conversion. Plotting failures remain warnings and do not stop source
+  processing. The setting is opt-in because it can add four rendered figures per
+  source in a full-cluster run.
 
 Directories
 --------------

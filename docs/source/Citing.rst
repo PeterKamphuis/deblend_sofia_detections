@@ -38,6 +38,12 @@ following references:
    moment-0 support filter, targeted optical-region deblending, and per-source
    Gaia-mask diagnostics.
 
+   The optional RA-velocity and Dec-velocity QA diagnostics were added after
+   ``v1.1.0``, in commit
+   ``b215ca0da755fad7dbd52bc442b2f828796a2352``. Until a later release contains
+   them, cite that full commit when those products contribute to the scientific
+   workflow.
+
 #. **Peter Kamphuis's original package.** This acknowledges the software
    foundation from which the fork developed:
 
@@ -93,6 +99,15 @@ the target journal's conventions:
      year    = {2026},
      url     = {https://github.com/3rico/deblend_sofia_detections},
      note    = {Computer software}
+   }
+
+   @software{maina_deblend_sofia_detections_b215ca0_2026,
+     author  = {Maina, Eric},
+     title   = {deblend-sofia-detections},
+     version = {Git commit b215ca0da755fad7dbd52bc442b2f828796a2352},
+     year    = {2026},
+     url     = {https://github.com/3rico/deblend_sofia_detections/tree/b215ca0da755fad7dbd52bc442b2f828796a2352},
+     note    = {Computer software; post-v1.1.0 position-velocity QA implementation}
    }
 
    @software{kamphuis_deblend_sofia_detections_2026,

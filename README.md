@@ -24,10 +24,12 @@ The notes are pinned to reproducible Git revisions:
 | Peter Kamphuis's original project | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Foundation and reference revision from which this fork developed. |
 | This fork's previous tagged release | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Tagged baseline containing selected-source controls, failure reporting, optical QA, multi-plane FITS support, and manual-only markers. |
 | This fork's current release | [`v1.1.0`](https://github.com/3rico/deblend_sofia_detections/tree/v1.1.0) | Adds automatic DR10 counterparts, optional moment-0 support filtering, targeted optical-region deblending, Gaia-mask diagnostics, and corrected fork-maintainer metadata. |
+| Current documented development implementation | [`b215ca0`](https://github.com/3rico/deblend_sofia_detections/commit/b215ca0) | Post-`v1.1.0` implementation adding opt-in RA-velocity and Dec-velocity QA diagnostics. |
 
-Only committed additions included in `v1.1.0` are described. Scientific analyses
-should record and cite this release tag, together with the configuration and
-scientific inputs used for the run.
+Committed additions through `b215ca0` are described. Scientific analyses using
+the PV diagnostics should record and cite the full commit until they are included
+in a later tagged release; analyses using only the release functionality can cite
+`v1.1.0`.
 
 ### Additions maintained in this fork
 
@@ -42,6 +44,7 @@ scientific inputs used for the run.
 | Automatic catalogue | `input.auto_query_catalogue` can download and cache a field-limited Legacy Surveys DR10 Tractor table when no manual catalogue is supplied. |
 | DR10 marker filtering | `input.filter_dr10_markers_by_moment0_peaks` can require a selected DR10 object's exact optical region to contain a positive, beam-scale parent moment-0 maximum. |
 | Targeted optical deblending | Photutils multi-threshold deblending can be limited to cyan regions containing two or more moment-0 peaks, while other regions retain their existing pixel membership. |
+| Position-velocity QA | Optional RA-velocity and Dec-velocity projections mirror the catalogue and raw-child spatial overlays with the same marker and component colours. |
 | Gaia-mask provenance | Debug mode writes the optical cutout immediately after Gaia masking and the matching binary mask, including query-success and masked-pixel metadata. |
 | Documentation and tests | The fork includes an operational guide and focused regression tests for its version-specific controls and QA paths. |
 
@@ -496,6 +499,7 @@ general:
   optical_pixel_scale: 5.0
   counterpart_region: Ellipse
   debug: true
+  debug_pv_plots: true
 
 directories:
   run_directory: /data/cluster_deblend_trial
@@ -614,6 +618,7 @@ mandatory `directories.data_directory: ???` value before running.
 | `general.optical_pixel_scale` | `5.0` | Requested number of optical pixels across the H I beam; downloaded pixels are capped at 4 arcsec. |
 | `general.counterpart_region` | `Ellipse` | Spatial region used for counterpart matching. Supported choices include `Beam`, `3Beam`, `Box`, `Ellipse`, and `Full_Ellipse`. |
 | `general.debug` | `false` | Write additional diagnostic products, including a per-source optical/H I/catalogue QA plot. **This is not a dry-run mode.** |
+| `general.debug_pv_plots` | `false` | When `general.debug` is also true, write RA-velocity and Dec-velocity versions of both the catalogue and raw-child QA plots. This adds up to four PNGs per source. |
 
 ### Directory settings
 
@@ -884,6 +889,10 @@ sofia_output/
             ├── optical_segmentation_after_targeted_deblend_source_42.fits
             ├── optical_hi_catalogue_overlay_source_42.png
             ├── optical_hi_components_overlay_source_42.png
+            ├── optical_hi_catalogue_pv_ra_velocity_source_42.png
+            ├── optical_hi_catalogue_pv_dec_velocity_source_42.png
+            ├── optical_hi_components_pv_ra_velocity_source_42.png
+            ├── optical_hi_components_pv_dec_velocity_source_42.png
             └── catalogue_positions_source_42.ecsv
 ```
 
@@ -930,6 +939,19 @@ Not every file appears for every source:
   These are raw candidate children shown before counterpart-based merging or
   rejection; they are not confirmation of separate galaxies or accepted final
   catalogue sources.
+
+- With both `general.debug: true` and `general.debug_pv_plots: true`, four
+  position-velocity PNGs accompany those two spatial views. The RA-velocity
+  products sum the parent cubelet over Declination; the Dec-velocity products
+  sum it over Right Ascension. Grayscale shows the full parent-cube projection,
+  purple shows the masked parent H I footprint, and lavender contours show its
+  masked H I intensity. Cyan optical and yellow/red catalogue positions are
+  vertical spatial guides because those inputs do not provide an H I velocity.
+  In the component pair, child masks and H I intensities are contoured with the
+  same child colours as the spatial component plot, and coloured circles mark
+  the SoFiA RA/Dec and velocity centres. A frequency-axis cube is converted to
+  radio velocity using `RESTFRQ`/`RESTFREQ`; missing required spectral metadata
+  produces a plotting warning without stopping source processing.
 
 The QA plot is first written immediately after optical-source detection and is
 updated after counterpart matching. Consequently, an early plot is normally
@@ -1094,6 +1116,11 @@ possible. If this fork contributes to a paper, please cite:
 Version `v1.1.0` includes the automatic DR10 counterpart path, optional moment-0
 support filter, targeted optical-region deblending, and per-source Gaia-mask
 diagnostics. Cite `v1.1.0` when any of these paths contributes to the analysis.
+
+The optional RA-velocity and Dec-velocity QA diagnostics were added after
+`v1.1.0`, in commit `b215ca0da755fad7dbd52bc442b2f828796a2352`. Until a later
+release contains them, cite that full commit when those products contribute to
+the scientific workflow.
 
 Suggested methods wording:
 
