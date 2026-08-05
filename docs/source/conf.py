@@ -7,11 +7,11 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = 'deblend-sofia-detections'
-copyright = '2025, P. Kamphuis'
-author = 'P. Kamphuis'
+copyright = '2025 Peter Kamphuis; 2026 Eric Maina and contributors'
+author = 'Eric Maina; based on the original project by Peter Kamphuis'
 
-release = '0.0'
-version = '0.0.3'
+release = 'post-1.0.0 (7c83d62)'
+version = '1.0.0+'
 
 # -- General configuration
 
@@ -28,6 +28,10 @@ source_suffix = {
     '.rst': 'restructuredtext',
     '.md': 'markdown',
 }
+
+# Generate anchors for the README headings so its table of contents continues
+# to work when the root Markdown file is included in the Sphinx documentation.
+myst_heading_anchors = 3
 
 intersphinx_mapping = {
     'python': ('https://docs.python.org/3/', None),

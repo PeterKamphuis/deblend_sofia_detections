@@ -1,5 +1,5 @@
 The  deblend-sofia-detections' yaml file documentation!
-======================================
+========================================================
 
 Introduction 
 ----------------
@@ -7,31 +7,32 @@ Introduction
 .. note::
 
   We thank Peter Kamphuis for creating and openly sharing the original package on
-  which this fork is based. This configuration reference documents fork-specific
-  settings through ``v1.0.0``, notably
-  ``input.source_ids``, ``input.manual_markers_only``, and
-  ``general.continue_on_source_error``. See :doc:`Fork_Differences` for project
-  lineage and to identify which settings apply to each repository version.
+  which this fork is based. This configuration reference covers the committed
+  implementation through ``7c83d62``. The automatic DR10 and Gaia-diagnostic
+  features are newer than the ``v1.0.0`` tag. See :doc:`Fork_Differences` for the
+  version-pinned lineage and record the full commit when using post-release
+  settings scientifically.
 
-deblend-sofia-detections really only requires the sofia run input .par file 
-It should then automatically check all detections and download the necessary optical images.
-However there are a few more optional input parameters that can be specified in the .yml file to customize the behavior of the package.
+The minimum deblender configuration identifies the parameter file from the
+complete SoFiA run. That file locates the original cube and SoFiA output products;
+the separate ``sofia`` executable must also be available. By default the package
+checks all catalogue detections and obtains optical images as needed. The YAML
+settings below control source selection, counterpart inputs, watershed behavior,
+debug products, caching, and optional network services.
 
 
-@dataclass
+The YAML hierarchy follows these top-level configuration groups:
 
+.. code-block:: python
 
+   @dataclass
+   class Defaults:
+       print_examples: bool = False
+       configuration_file: Optional[str] = None
+       directories: Directories = field(default_factory=Directories)
+       internal: Internal = field(default_factory=Internal)
+       sofia: Sofia = field(default_factory=Sofia)
 
-  
-@dataclass
-class defaults:
-    print_examples: bool = False
-    configuration_file: Optional[str] = None
-   
-    
-    directories: Directories = field(default_factory = Directories)
-    internal: Internal = field(default_factory = Internal)
-    sofia: Sofia = field(default_factory = Sofia)
 Input Keywords
 --------------
       
@@ -67,10 +68,44 @@ Input Keywords
 
 **manual_input_tables**:
 
-   *list of str, optional, default= []*
+   *list of str, optional, default = [None]*
 
-  A list of input tables to use for the deblending process. To assist in matching detections to
-  optical sources and setting the optical markers.  
+  Counterpart tables used to match detections and set optical markers. Any
+  non-null manual table takes precedence over automatic DR10 querying.
+
+**auto_query_catalogue**:
+
+  *bool, optional, default = False*
+
+  If True and no manual catalogue is supplied, download and cache the relevant
+  Legacy Surveys DR10 Tractor rows. A manual catalogue always takes precedence.
+  The query footprint comes from the full-field moment-0 celestial WCS and is
+  prepared before the per-source loop. Missing input, an invalid TAP response, or
+  a network/service failure stops the run unless a compatible cache is available.
+
+**galaxy_types**:
+
+  *list of str, optional, default = [REX, EXP, DEV, SER]*
+
+  The case-insensitive DR10 Tractor morphology allowlist. After this filter, at
+  most one row is selected per cyan optical region using the highest finite
+  ``flux_g`` value in that region. The resulting association is positional only;
+  morphology and brightness do not confirm a common redshift or ownership of H I.
+
+**filter_dr10_markers_by_moment0_peaks**:
+
+  *bool, optional, default = False*
+
+  If True, an automatically selected DR10 row seeds the watershed only when a
+  finite positive, beam-scale local maximum in the parent H I moment-0 map maps
+  inside the row's exact cyan optical-segmentation label. The elliptical search
+  footprint uses ``BMAJ``, ``BMIN``, ``BPA``, and the celestial pixel scale. No
+  global flux or S/N threshold is applied. Rejected DR10 rows and their associated
+  cyan labels are removed from seeding, while unrelated automatic detections are
+  unchanged. Manual catalogues are never filtered, and the option has no effect
+  without automatic DR10 querying and optical deblending. This is independent of
+  ``use_peak_deblending``. Missing or invalid parent moment-0 celestial WCS or
+  synthesized-beam metadata raises a source-level input error.
 
 **manual_markers_only**:
 
@@ -89,8 +124,10 @@ Input Keywords
 
   *bool, optional, default = False*
   
-  deblend sofia pickles input table to speed up rerun. However, this mean that if changes are made to text tables they are not propogated to the code.
-  If original_tables=True deblend will re-read the original tables provided by the user instead of using the pickled ones.
+  Reread manual text tables instead of their cached pickle files. In automatic
+  DR10 mode, this also forces a new download instead of reusing the cached CSV and
+  query metadata. This setting is unrelated to backups and does not protect SoFiA
+  products from being regenerated.
 
 
 **manual_optical_image**:
@@ -114,7 +151,8 @@ Input Keywords
   
   If True deblend will  use the original images provided by the user or redownload a SkyView image instead looking for processed  cutouts downloaded. 
   This can be useful if the user has better optical images than the DSS ones or if they want to use different wavelength ranges for the optical images. The images should be in the run_directory the ancillary directory or the data_directory or be provided with the full path.
-    # optical and peak deblending not mutually exclusive, if both are True we will use the original images for the deblending and if they are False we will use the cutouts downloaded from SkyView for the deblending.
+  Optical and peak deblending are not mutually exclusive. This refresh setting
+  controls image caching; it does not select the watershed route.
 
 **use_optical_deblending**: 
   
@@ -148,7 +186,7 @@ Input Keywords
  The compactness parameter for the watershed algorithm. This can be useful to adjust the regularity of the sources found by the watershed algorithm. A higher value will lead to more compact sources while a lower value will lead to more extended sources. The default value is 0.0 which is a good starting point but can be adjusted based on the specific data and requirements of the user.
 
 General Keywords
---------------
+----------------
 
 *Specified with general.*
 
@@ -205,15 +243,27 @@ General Keywords
   ``debug_products/optical_hi_catalogue_overlay_source_<ID>.png``: a grayscale
   optical cutout with the H I source footprint in purple, faint moment-0
   contours, cyan outlines and crosses at detected optical sources, and yellow
-  dots at manual or accepted NED catalogue positions. The plotted catalogue
-  rows are also written to ``catalogue_positions_source_<ID>.ecsv``. Plotting
-  failures produce warnings and do not stop source processing.
+  dots at manual, selected DR10, or accepted NED catalogue positions. DR10 rows
+  rejected by the optional moment-0 filter appear as red crosses. The plotted
+  catalogue rows are also written to
+  ``catalogue_positions_source_<ID>.ecsv``. Plotting failures produce warnings
+  and do not stop source processing.
   ``debug_products/optical_hi_components_overlay_source_<ID>.png`` is a
   companion view with separately coloured contours for every raw child from
   the first trial SoFiA parameterisation. Matching coloured circles and labels
   mark the child catalogue RA/Dec centres. These components are captured before
   catalogue-based merging or rejection and are not confirmed galaxies or
   accepted final catalogue sources. This is not a dry-run setting.
+  When ``filter_dr10_markers_by_moment0_peaks`` is active, debug output also
+  includes the exact parent moment-0 FITS used by the filter, a binary moment-0
+  peak-map FITS, and a DR10 ECSV audit table containing identity, type,
+  ``flux_g``, optical label, accepted/rejected status, matched peak position and
+  value, and rejection reason. The QA overlays show accepted DR10 positions as
+  yellow circles and rejected diagnostic-only positions as red crosses.
+  Debug mode also writes ``background_gaia_masked_source_<ID>.fits`` and
+  ``gaia_star_mask_source_<ID>.fits``. Their headers record ``GAIA_OK``,
+  ``MASKNPIX``, and ``MASKFRAC`` so a failed Gaia query can be distinguished from
+  a successful query that found no maskable stars.
 
 Directories
 --------------
@@ -287,7 +337,7 @@ Sofia Keywords
   The catalogue file used for the SOFIA run.
 
 Internal Keywords
---------------
+-----------------
 
 *Specified with internal.*
 

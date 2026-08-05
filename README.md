@@ -22,11 +22,12 @@ The notes are pinned to reproducible Git revisions:
 | Project state | Revision | Role in this documentation |
 | --- | --- | --- |
 | Peter Kamphuis's original project | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Foundation and reference revision from which this fork developed. |
-| This fork | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Last committed fork release covered by these addition notes. |
+| This fork's last tagged release | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Tagged baseline containing selected-source controls, failure reporting, optical QA, multi-plane FITS support, and manual-only markers. |
+| This fork's current documented implementation | [`7c83d62`](https://github.com/3rico/deblend_sofia_detections/commit/7c83d62) | Post-`v1.0.0` implementation adding automatic DR10 counterparts, optional moment-0 support filtering, and Gaia-mask diagnostics. |
 
-Only committed additions through `v1.0.0` are described. Work that has not yet
-been committed and tagged is intentionally excluded; it should be added when it
-becomes part of a reproducible repository revision.
+Only committed additions through `7c83d62` are described. Because those latest
+features are newer than the `v1.0.0` tag, scientific analyses using them should
+record and cite the full Git commit until a later release is tagged.
 
 ### Additions maintained in this fork
 
@@ -38,6 +39,9 @@ becomes part of a reproducible repository revision.
 | Manual optical FITS input | RGB and other multi-plane FITS data can be reduced to 2-D by identifying celestial axes from WCS and collapsing the remaining axes. |
 | Standalone optical conversion | `scripts/convert_optical_fits_to_2d.py` provides mean, median, or first-plane collapse modes with guarded output handling. |
 | Marker control | `input.manual_markers_only` allows a vetted catalogue to define watershed seeds while automatic detections remain available as QA context. |
+| Automatic catalogue | `input.auto_query_catalogue` can download and cache a field-limited Legacy Surveys DR10 Tractor table when no manual catalogue is supplied. |
+| DR10 marker filtering | `input.filter_dr10_markers_by_moment0_peaks` can require a selected DR10 object's exact optical region to contain a positive, beam-scale parent moment-0 maximum. |
+| Gaia-mask provenance | Debug mode writes the optical cutout immediately after Gaia masking and the matching binary mask, including query-success and masked-pixel metadata. |
 | Documentation and tests | The fork includes an operational guide and focused regression tests for its version-specific controls and QA paths. |
 
 ### Detailed addition notes
@@ -87,6 +91,29 @@ becomes part of a reproducible repository revision.
    and troubleshooting. Focused unit tests cover each fork-specific helper and QA
    path.
 
+7. **Automatic Legacy Surveys DR10 counterparts.** When no manual catalogue is
+   supplied, `input.auto_query_catalogue: true` downloads a field-limited subset
+   of `ls_dr10.tractor` from NOIRLab Data Lab and caches both the CSV and exact
+   query metadata. Eligible morphologies are controlled by `input.galaxy_types`.
+   Per parent source, at most one eligible row is selected in each optical region,
+   using the highest finite `flux_g`. These are positional counterparts, not
+   spectroscopic confirmations.
+
+8. **Optional H I support for DR10 markers.** With
+   `input.filter_dr10_markers_by_moment0_peaks: true`, a selected DR10 marker is
+   retained only when a finite positive local maximum, measured with a
+   synthesized-beam footprint, falls inside the same optical-segmentation label.
+   The filter uses no global flux or signal-to-noise threshold. Debug mode records
+   the exact moment-0 input, binary peak map, and an ECSV decision audit; rejected
+   catalogue positions remain visible as red crosses.
+
+9. **Per-source Gaia-mask diagnostics.** Debug mode writes the background cutout
+   immediately after Gaia masking and a corresponding binary mask under the
+   source's `debug_products` directory. FITS headers record whether the Gaia query
+   succeeded, the number of masked pixels, and their fraction of the cutout. A
+   failed Gaia query is therefore distinguishable from a successful zero-star
+   result.
+
 ### Foundations retained from the original project
 
 The core scientific intent is unchanged: the program starts from an existing
@@ -98,13 +125,15 @@ does not make the workflow non-destructive. The copied-workspace warning below
 applies equally to the original project and this fork.
 
 For the original broad all-source workflow on the new controls, leave
-`input.source_ids` empty and `input.manual_markers_only` false. Set
+`input.source_ids` empty, `input.manual_markers_only` false,
+`input.auto_query_catalogue` false, and
+`input.filter_dr10_markers_by_moment0_peaks` false. Set
 `general.continue_on_source_error: false` if the run must stop at the first
 source-level exception. Debug overlays are only created when `general.debug` is
 enabled.
 
 The corresponding documentation page is
-[Project lineage and fork additions](docs/source/Fork_Differences.rst).
+[Project lineage and fork additions](https://github.com/3rico/deblend_sofia_detections/blob/need_based_modifications/docs/source/Fork_Differences.rst).
 
 ## Package overview
 
@@ -118,6 +147,17 @@ to decide whether more than one component should remain.
 The package can process a full survey or cluster-field catalogue containing many
 normal and blended detections. By default it checks every SoFiA catalogue ID. Use
 the optional `source_ids` setting to run a controlled trial on known candidates.
+
+> [!WARNING]
+> **Beta research software—astronomical review is required.** The generated child
+> masks and catalogues are candidate deblending solutions, not confirmed
+> astrophysical sources. An internal “accepted” split only means that it passed the
+> software's procedural checks. Before using a split scientifically, an astronomer
+> must visually inspect the masks against the H I cube channel by channel, moment
+> maps, spectra, position-velocity structure, and credible optical or spectroscopic
+> counterparts. Flux conservation alone is not validation: the total flux can be
+> preserved while emission is assigned to the wrong galaxy. Ambiguous cases should
+> be classified as rejected or unresolved rather than reported as secure splits.
 
 > [!CAUTION]
 > The program can overwrite the master SoFiA mask and then rerun SoFiA, which can
@@ -135,6 +175,7 @@ the optional `source_ids` setting to run a controlled trial on known candidates.
 - [Quick start](#quick-start-selected-known-blends)
 - [Configuration](#important-configuration-settings)
 - [Manual optical images and catalogues](#supplying-a-manual-optical-image)
+- [Automatic DR10 catalogue](#automatically-querying-the-legacy-surveys-dr10-catalogue)
 - [Outputs](#understanding-the-output)
 - [Scientific quality assurance](#scientific-quality-assurance)
 - [Troubleshooting](#troubleshooting)
@@ -210,8 +251,9 @@ For each selected SoFiA source, the current pipeline performs the following step
    reliability filtering, and dilation disabled. The bundled trial template also
    has threshold finding disabled, so SoFiA measures the proposed labelled
    components rather than rediscovering sources.
-8. It searches NED and any supplied manual counterpart tables. Proposed components
-   without a suitable counterpart may be merged back together.
+8. It searches NED, any supplied manual counterpart tables, and any selected
+   automatic DR10 positions. Proposed components without a suitable counterpart
+   may be merged back together.
 9. If more than one viable component remains, it inserts the relabelled source mask
    into the master field mask.
 10. After all selected IDs have been checked, it reruns SoFiA on the complete field
@@ -310,7 +352,9 @@ The default workflow accesses:
 
 - SkyView for a DSS2 Red image, unless a manual optical FITS image is supplied;
 - Gaia DR3 for foreground-star masking; and
-- NED for counterpart matching.
+- NED for counterpart matching; and
+- NOIRLab Data Lab when `input.auto_query_catalogue: true` and no manual
+  catalogue is supplied.
 
 Gaia and NED failures have limited fallbacks, but reliable counterpart information
 is central to deciding whether a proposed split survives. For crowded fields,
@@ -422,6 +466,11 @@ input:
     - "57"
     - "221"
 
+  # Used only when manual_input_tables contains no catalogue path.
+  auto_query_catalogue: false
+  galaxy_types: [REX, EXP, DEV, SER]
+  filter_dr10_markers_by_moment0_peaks: false
+
   use_optical_deblending: true
   use_cube_deblending: true
   use_peak_deblending: true
@@ -508,9 +557,12 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `input.sofia_parameters` | `sofia_input.par` | Original `.par` file for the complete SoFiA run being deblended. |
 | `input.source_ids` | `[]` | Optional catalogue-ID allowlist. Empty means all IDs. Unknown IDs stop before source processing. |
 | `input.manual_input_tables` | `[null]` | Optional `.csv`, `.txt`, or compatible pickled counterpart tables. |
+| `input.auto_query_catalogue` | `false` | When `true` and no manual catalogue is supplied, download and cache the field subset of `ls_dr10.tractor` from the public NOIRLab Data Lab TAP service. |
+| `input.galaxy_types` | `[REX, EXP, DEV, SER]` | DR10 Tractor morphology types accepted as galaxy counterparts. The comparison is case-insensitive. |
+| `input.filter_dr10_markers_by_moment0_peaks` | `false` | When automatic DR10 selection is active, require a finite positive beam-scale moment-0 maximum inside the selected row's exact cyan optical region. Manual catalogues are never filtered. |
 | `input.manual_markers_only` | `false` | When `true`, only manual catalogue positions inside the parent H I mask seed optical watershed runs; automatic optical detections remain QA diagnostics. Requires a manual input table. |
 | `input.manual_optical_image` | `[null]` | Optional celestial-WCS optical FITS image. A 2-D image is used directly; multi-plane images are collapsed over non-celestial axes. Only the first image is currently used. |
-| `input.original_tables` | `false` | Reread supplied text tables instead of using cached pickle files. This is not a backup/safety option. |
+| `input.original_tables` | `false` | Reread supplied text tables instead of using cached pickle files, and force a fresh automatic DR10 download when that mode is active. This is not a backup/safety option. |
 | `input.original_images` | `false` | Recreate cached optical products from the supplied image or SkyView. This is not a backup/safety option. |
 | `input.use_optical_deblending` | `true` | Detect optical markers and try an optical watershed split. |
 | `input.use_cube_deblending` | `true` | Use the 3-D cube for optical-marker watershed; `false` uses the 2-D moment-0 map. |
@@ -681,6 +733,71 @@ The loader caches text/CSV tables as `.pkl` files. After editing a source table,
 use `original_tables: true` for the next run so the text is reread. It can then be
 returned to `false` to reuse the cache.
 
+## Automatically querying the Legacy Surveys DR10 catalogue
+
+If no manual counterpart table is available, the deblender can query the public
+[NOIRLab Data Lab TAP service](https://datalab.noirlab.edu/docs/manual/UsingAstroDataLab/DataAccessInterfaces/CatalogDataAccessTAPSCS/CatalogDataAccessTAPSCS.html)
+for the current field's Legacy Surveys DR10 Tractor sources:
+
+```yaml
+input:
+  manual_input_tables: [null]
+  auto_query_catalogue: true
+  galaxy_types:
+    - REX
+    - EXP
+    - DEV
+    - SER
+  filter_dr10_markers_by_moment0_peaks: true
+```
+
+The query uses `ls_dr10.tractor`, keeps primary-brick rows, and downloads only the
+identifier, position, morphology, and `flux_g` columns needed by the deblender.
+The field subset and query metadata are cached as
+`ancillary_data/catalogues/<SoFiA-basename>_ls_dr10_tractor.csv` and `.json`.
+Set `input.original_tables: true` to force a fresh download; otherwise an exact
+cache match is reused.
+
+The field query is prepared once, before the per-source loop. The full-field
+moment-0 FITS must therefore exist and contain usable celestial WCS. A missing
+image, invalid response, network failure, or unavailable TAP service stops the run
+before source processing unless a compatible cached query is available.
+
+For each parent H I detection, a DR10 position must fall inside both the purple
+H I footprint and a positive cyan optical-detection region. At most one DR10 row
+is associated with each cyan region. Rows whose `type` is not in
+`input.galaxy_types` are rejected, and if two or more eligible rows occupy the
+same region, the row with the highest finite `flux_g` is selected. The selected
+position replaces that cyan region's generic optical marker and is also
+available as a positional (not spectroscopic) counterpart for the trial H I
+child component.
+
+When `input.filter_dr10_markers_by_moment0_peaks: true`, those per-region DR10
+selections pass through one additional gate before the watershed. The parent
+moment-0 map is searched for finite positive local maxima with an elliptical
+maximum-filter footprint derived from `BMAJ`, `BMIN`, `BPA`, and the celestial
+WCS. A selected row is retained only when a peak maps into the exact same cyan
+segmentation label. No global peak-flux or signal-to-noise threshold is imposed.
+A rejected row and its associated cyan region are removed from watershed
+seeding; unrelated automatic cyan regions remain unchanged. This option is
+independent of `input.use_peak_deblending`, has no effect when automatic DR10 or
+optical deblending is inactive, and never filters a manual catalogue. Missing or
+invalid parent moment-0 WCS or beam metadata raises a source-level input error.
+
+Any non-null entry in `input.manual_input_tables` takes absolute precedence. In
+that case no DR10 request is made, even if `auto_query_catalogue: true`; an
+invalid manual path therefore raises an input error rather than silently falling
+back to the online catalogue.
+
+> [!WARNING]
+> A selected DR10 row is only a positional prior. Tractor morphology, high
+> `flux_g`, proximity to H I, or a positive moment-0 maximum does not demonstrate
+> that the object is a galaxy at the H I redshift or that it owns the associated
+> gas. The optional moment-0 filter deliberately has no global S/N threshold, so
+> even a very faint positive maximum can pass. Inspect every retained and rejected
+> marker against redshift information, the optical image, channel maps, spectra,
+> and position-velocity structure.
+
 ## Understanding the output
 
 With default directories, source ID 42 produces a directory similar to:
@@ -700,6 +817,11 @@ sofia_output/
         │   ├── ..._mask.fits
         │   └── ..._cubelets/
         └── debug_products/
+            ├── background_gaia_masked_source_42.fits
+            ├── gaia_star_mask_source_42.fits
+            ├── parent_moment0_used_for_dr10_peak_filter_source_42.fits
+            ├── moment0_peak_map_source_42.fits
+            ├── dr10_moment0_peak_filter_audit_source_42.ecsv
             ├── optical_hi_catalogue_overlay_source_42.png
             ├── optical_hi_components_overlay_source_42.png
             └── catalogue_positions_source_42.ecsv
@@ -714,14 +836,29 @@ Not every file appears for every source:
   field mask;
 - `Sofia_Output/` contains the temporary SoFiA measurement of proposed children;
 - `debug_products/` exists when `general.debug: true` and contains intermediate
-  markers, smoothed cubes, watershed diagnostics, and a per-source QA image. In
+  markers, smoothed cubes, watershed diagnostics, and per-source QA images.
+  `background_gaia_masked_source_<ID>.fits` is the optical cutout immediately
+  after Gaia masking, with masked pixels stored as NaN.
+  `gaia_star_mask_source_<ID>.fits` is the matching binary mask (`1` for masked,
+  `0` for retained) and records `GAIA_OK`, `MASKNPIX`, and `MASKFRAC` in its FITS
+  header. When the DR10 moment-0 peak filter is active,
+  `parent_moment0_used_for_dr10_peak_filter_source_<ID>.fits` preserves the
+  exact in-memory parent map used for the decision,
+  `moment0_peak_map_source_<ID>.fits` stores the binary representative peak
+  pixels, and `dr10_moment0_peak_filter_audit_source_<ID>.ecsv` records every
+  selected DR10 identity, morphology, `flux_g`, optical label, decision, matched
+  peak coordinate/value, and rejection reason. In the overlays, accepted DR10
+  positions remain yellow circles and rejected diagnostic-only positions are
+  red crosses. In
   `optical_hi_catalogue_overlay_source_<ID>.png`, the optical cutout is the
   grayscale background, the original H I footprint is purple, faint lavender
   contours show moment-0 intensity, cyan outlines and crosses mark automatically
-  detected optical sources, and yellow dots mark manual or accepted NED catalogue
-  positions. `catalogue_positions_source_<ID>.ecsv` records the catalogue name,
-  object name, RA, and Dec for every yellow dot. If no catalogue position falls
-  inside the cutout, the table is empty and the plot says so explicitly.
+  detected optical sources, yellow dots mark accepted catalogue positions, and
+  red crosses mark DR10 positions rejected by the optional moment-0 filter.
+  `catalogue_positions_source_<ID>.ecsv` records the catalogue name, object name,
+  RA, and Dec for every plotted catalogue position; detailed filter decisions
+  remain in the separate DR10 audit table. If no catalogue position falls inside
+  the cutout, the table is empty and the plot says so explicitly.
 - `optical_hi_components_overlay_source_<ID>.png` retains the same optical,
   parent-H I, optical-detection, and catalogue context, then adds one distinct
   contour colour for every child from the first trial SoFiA parameterisation.
@@ -890,6 +1027,12 @@ possible. If this fork contributes to a paper, please cite:
    *The Astrophysical Journal*, 980, 157,
    https://doi.org/10.3847/1538-4357/ad9579.
 
+The automatic DR10 counterpart path, optional moment-0 support filter, and
+per-source Gaia-mask diagnostics were introduced after `v1.0.0`, in commit
+`7c83d62b8310e6b5b9052f93bed4fbd3948d0237`. Until those features appear in a
+tagged release, cite that full commit hash instead of describing the analysis as
+using unmodified `v1.0.0`.
+
 Suggested methods wording:
 
 > H I detections were deblended with `deblend-sofia-detections` v1.0.0
@@ -897,14 +1040,20 @@ Suggested methods wording:
 > (Kamphuis 2026), using the watershed-deblending approach described by Huang et
 > al. (2025).
 
+Replace `v1.0.0` with the full Git commit when the analysis uses post-release
+functionality.
+
 Suggested acknowledgement:
 
 > We thank Peter Kamphuis for creating and openly sharing the original
 > `deblend_sofia_detections` package on which this fork is based.
 
-The repository includes machine-readable [`CITATION.cff`](CITATION.cff) metadata.
+The repository includes machine-readable
+[`CITATION.cff`](https://github.com/3rico/deblend_sofia_detections/blob/need_based_modifications/CITATION.cff)
+metadata.
 Full paper-ready references and BibTeX are provided in the
-[citation guide](docs/source/Citing.rst). Adapt the formatting to the target
+[citation guide](https://github.com/3rico/deblend_sofia_detections/blob/need_based_modifications/docs/source/Citing.rst).
+Adapt the formatting to the target
 journal, but retain the software author, title, version, year, and URL. When using
 an unreleased checkout, also record the full Git commit hash.
 
@@ -918,19 +1067,23 @@ Before a production run, record:
 - the deblender YAML and exact command line;
 - source IDs attempted;
 - manual table and optical-image versions;
+- automatic-catalogue cache metadata and DR10 filter settings, when used;
+- the per-source Gaia and DR10 debug/audit products, when enabled;
 - baseline catalogue and mask checksums;
 - per-source QA classification and notes.
 
 ## Further documentation and development status
 
-- [Advanced configuration reference](docs/source/Advanced.rst)
-- [Citation and acknowledgement guide](docs/source/Citing.rst)
+- [Advanced configuration reference](https://github.com/3rico/deblend_sofia_detections/blob/need_based_modifications/docs/source/Advanced.rst)
+- [Citation and acknowledgement guide](https://github.com/3rico/deblend_sofia_detections/blob/need_based_modifications/docs/source/Citing.rst)
 - [Original project by Peter Kamphuis](https://github.com/PeterKamphuis/deblend_sofia_detections)
 - [SoFiA-2 project](https://gitlab.com/SoFiA-Admin/SoFiA-2)
 - [Method paper](https://ui.adsabs.harvard.edu/abs/2025ApJ...980..157H/abstract)
 
-The package is currently marked beta. Its software and scientific provenance is
-recorded in the lineage and citation sections above.
+The package is beta research software. The scientific-review warning near the top
+of this README and the quality-assurance procedure above apply to every proposed
+split. Its software and scientific provenance is recorded in the lineage and
+citation sections above.
 
 Bug reports and focused improvements are welcome through the
 [fork repository](https://github.com/3rico/deblend_sofia_detections).

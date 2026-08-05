@@ -31,18 +31,23 @@ The notes are intentionally pinned to exact committed states:
 
 * Peter Kamphuis's original project at release ``v0.0.4``, commit
   `a6daef3 <https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3>`_;
-* this fork at release ``v1.0.0``, commit
-  `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_.
+* this fork's last tagged release, ``v1.0.0``, commit
+  `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_;
+* the current documented post-release implementation, commit
+  `7c83d62 <https://github.com/3rico/deblend_sofia_detections/commit/7c83d62>`_.
 
-Only committed additions through ``v1.0.0`` are described. Work that has not yet
-been committed and tagged is excluded so that every statement can be reproduced
-from the named revisions.
+Only committed additions through ``7c83d62`` are described. The automatic DR10
+and Gaia-diagnostic additions are newer than the ``v1.0.0`` tag. Until they are
+included in a later release, scientific users should record and cite the full Git
+commit rather than identifying those runs as unmodified ``v1.0.0``.
 
 The fork retains the original project's watershed method, SoFiA input-product
 conventions, counterpart-based filtering, master-mask update, and final field
 re-parameterisation. Its additions concentrate on controlling which sources run,
 recording source-level failures, handling multi-plane optical FITS products, and
-making proposed splits easier to audit scientifically.
+making proposed splits easier to audit scientifically. Post-``v1.0.0`` additions
+also provide opt-in Legacy Surveys DR10 positional counterparts, optional H I
+support filtering for those markers, and explicit Gaia-mask provenance products.
 
 Summary of additions maintained in this fork
 --------------------------------------------
@@ -71,6 +76,15 @@ Summary of additions maintained in this fork
    * - Watershed markers
      - Optionally uses only manual catalogue markers while retaining automatic
        detections as QA context.
+   * - Automatic catalogue
+     - Optionally downloads and caches a field-limited Legacy Surveys DR10 Tractor
+       table when no manual catalogue is supplied.
+   * - DR10 marker filtering
+     - Optionally retains a selected DR10 marker only when the same optical region
+       contains a finite positive, beam-scale parent moment-0 maximum.
+   * - Gaia-mask provenance
+     - Writes the masked optical background and matching binary mask per source in
+       debug mode, including query-success and masked-pixel metadata.
    * - Documentation and tests
      - Adds an operational guide and regression tests for fork-specific behavior.
 
@@ -122,7 +136,8 @@ With ``general.debug: true``, each processed source can receive these new produc
 ``optical_hi_catalogue_overlay_source_<ID>.png``
   A WCS-aware grayscale optical cutout with the original parent H I footprint in
   purple, faint moment-0 contours, cyan automatic optical-source outlines and
-  centroids, and yellow manual or accepted NED catalogue positions.
+  centroids, yellow manual/selected DR10/accepted NED catalogue positions, and red
+  crosses for DR10 positions rejected by the optional moment-0 filter.
 
 ``catalogue_positions_source_<ID>.ecsv``
   The catalogue origin, object name, RA, and Dec associated with each plotted
@@ -139,6 +154,10 @@ The first QA image is written early and updated after counterpart searches, so i
 often survives a later watershed or trial-SoFiA failure. Visualisation errors are
 reported as warnings and do not abort the scientific source processing. The fork
 adds Matplotlib as a runtime dependency for these products.
+
+When the corresponding modes are active, the same source-level debug directory
+also contains Gaia masking products and a DR10 moment-0 decision audit, described
+below.
 
 4. Handle multi-dimensional manual optical FITS files
 -----------------------------------------------------
@@ -183,7 +202,79 @@ fields where a vetted counterpart list is safer than every optical segmentation
 island. The default is ``false``, preserving combined automatic and manual marker
 behavior.
 
-6. Expand operations documentation and regression coverage
+6. Use an automatic Legacy Surveys DR10 catalogue
+--------------------------------------------------
+
+Commit ``7c83d62`` adds these opt-in settings::
+
+  input:
+    manual_input_tables: [null]
+    auto_query_catalogue: true
+    galaxy_types: [REX, EXP, DEV, SER]
+
+The software constructs a field footprint from the full-field moment-0 celestial
+WCS, queries ``ls_dr10.tractor`` through the public NOIRLab Data Lab TAP service,
+and caches the returned CSV together with the exact query metadata. Cache reuse
+requires the table columns, sky bounds, selected morphology types, service URL,
+and query text to match. ``input.original_tables: true`` forces a fresh download.
+
+For each parent H I detection, a catalogue position must lie inside both the
+projected parent mask and a positive optical-segmentation label. At most one
+allowed row is retained per optical region, chosen by the highest finite
+``flux_g``. Catalogue coordinates are assigned to the nearest segmentation pixel,
+including at region boundaries. The selected position becomes a watershed marker
+and may serve as a positional child counterpart.
+
+Any supplied manual catalogue takes precedence and prevents the automatic query.
+DR10 matches are positional, not spectroscopic. Neither a Tractor morphology nor
+the brightest ``flux_g`` in a region proves that an object lies at the H I redshift
+or owns the detected gas.
+
+7. Optionally require parent moment-0 support for DR10 markers
+--------------------------------------------------------------
+
+The post-release setting::
+
+  input:
+    filter_dr10_markers_by_moment0_peaks: true
+
+searches the parent moment-0 map for finite positive local maxima using an
+elliptical footprint derived from ``BMAJ``, ``BMIN``, ``BPA``, and the celestial
+pixel-scale matrix. A selected DR10 row remains a marker only when a peak maps
+into that row's exact optical-segmentation label. A rejected catalogue-associated
+label is removed from seeding, while unrelated automatic optical regions remain.
+
+The filter is independent of ``input.use_peak_deblending`` and never applies to a
+manual catalogue. It has no global amplitude or signal-to-noise threshold: a very
+faint positive local maximum can pass. It is therefore a topology-based support
+test, not astrophysical confirmation.
+
+With ``general.debug: true``, the source directory records:
+
+* ``parent_moment0_used_for_dr10_peak_filter_source_<ID>.fits``;
+* ``moment0_peak_map_source_<ID>.fits``; and
+* ``dr10_moment0_peak_filter_audit_source_<ID>.ecsv``.
+
+The audit includes catalogue identity, morphology, ``flux_g``, optical label,
+accepted/rejected status, matched peak position and value, and rejection reason.
+
+8. Record per-source Gaia masking provenance
+---------------------------------------------
+
+In debug mode, commit ``7c83d62`` writes:
+
+* ``background_gaia_masked_source_<ID>.fits``, the optical background immediately
+  after applying the Gaia mask and before background subtraction or smoothing;
+* ``gaia_star_mask_source_<ID>.fits``, a binary mask in which one denotes a masked
+  pixel.
+
+Both headers record ``GAIA_OK``, ``MASKNPIX``, and ``MASKFRAC``. This distinguishes
+a successful query that found no maskable stars from a failed Gaia query followed
+by the package's unmasked fallback. When debug mode is enabled and a cached
+cleaned image lacks these products, the Gaia step is rebuilt so the diagnostics
+correspond to the source being processed.
+
+9. Expand operations documentation and regression coverage
 -----------------------------------------------------------
 
 The fork complements the original project documentation with a beginner-oriented
@@ -194,8 +285,10 @@ configuration reference documents each new setting.
 
 Focused tests cover source-ID selection and error reporting, stale failure-log
 replacement, WCS-aware QA plots and catalogue records, trial-child overlays,
-multi-axis optical reduction, the standalone converter CLI, and manual-only marker
-selection.
+multi-axis optical reduction, the standalone converter CLI, manual-only marker
+selection, DR10 query caching and counterpart selection, WCS-aware moment-0
+filtering, nearest-pixel catalogue assignment, debug audit products, and Gaia-mask
+provenance.
 
 Continuity with the original workflow and scientific limitations
 -----------------------------------------------------------------
@@ -205,6 +298,9 @@ controls are left at their defaults:
 
 * ``input.source_ids: []`` processes all catalogue IDs;
 * ``input.manual_markers_only: false`` retains automatic optical markers;
+* ``input.auto_query_catalogue: false`` makes no DR10 network request;
+* ``input.filter_dr10_markers_by_moment0_peaks: false`` leaves selected DR10
+  markers unfiltered when automatic catalogue mode is enabled;
 * ``general.debug: false`` does not generate the new PNG/ECSV QA products.
 
 The exception policy is a version-specific choice: this fork continues after a
@@ -219,6 +315,15 @@ SoFiA products. The new controls and QA plots make decisions more manageable and
 auditable; they do not remove the need for scientific review or the requirement to
 work on a complete copy.
 
+.. warning::
+
+   This fork is beta research software. Internal acceptance, a positional DR10
+   association, moment-0 peak support, or conservation of parent flux does not
+   establish that a split is astrophysically correct. An astronomer must visually
+   inspect every changed source in the H I cube, channel maps, moment maps,
+   spectra, position-velocity structure, and counterpart data. Ambiguous results
+   should be rejected or classified as unresolved.
+
 Fork addition history
 ---------------------
 
@@ -232,3 +337,6 @@ Fork addition history
   utility.
 * ``11124b6`` — trial H I child-component QA overlay.
 * ``d78fa1b`` — manual-catalogue-only watershed marker mode.
+* ``7c83d62`` — automatic DR10 catalogue selection, optional beam-scale moment-0
+  support filtering, DR10 decision audits, per-source Gaia-mask diagnostics, and
+  nearest-pixel catalogue-to-segmentation assignment.
