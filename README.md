@@ -555,11 +555,27 @@ deblend print_examples=true
 
 It writes:
 
-- `deblend_sofia_detections_default.yml`, containing current user-facing defaults;
+- `deblend_sofia_detections_default.yml`, containing all user-facing settings in
+  a recommended starter configuration;
 - `sofia_template.par`, the generic internal SoFiA measurement template.
 
 The command exits after writing the files. The template is useful for inspection,
 but it is not a replacement for the `.par` file from your original SoFiA run.
+
+The generated starter intentionally enables the automatic DR10, moment-0 support,
+and targeted optical-region path, while disabling the separate H I peak watershed:
+
+```yaml
+input:
+  auto_query_catalogue: true
+  filter_dr10_markers_by_moment0_peaks: true
+  deblend_optical_regions_with_multiple_moment0_peaks: true
+  use_peak_deblending: false
+```
+
+These are generated-example choices, not changes to the compatibility defaults
+listed below. The user must still replace `input.sofia_parameters` and the
+mandatory `directories.data_directory: ???` value before running.
 
 ## Important configuration settings
 

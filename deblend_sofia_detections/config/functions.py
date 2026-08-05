@@ -41,6 +41,16 @@ create_package_name def_file=cube.fits error_generator=tirshaker
         default_name = f'{__name__.split(".")[0]}_default.yml' 
         masked_copy = OmegaConf.masked_copy(cfg,\
                     ['input','general','directories'])
+        # The printed file is a recommended v1.1 starter configuration rather
+        # than a byte-for-byte dump of the compatibility defaults.  Keep these
+        # choices local to print_examples so existing configurations and
+        # command-line-only runs retain their established behavior.
+        masked_copy.input.auto_query_catalogue = True
+        masked_copy.input.filter_dr10_markers_by_moment0_peaks = True
+        masked_copy.input[
+            'deblend_optical_regions_with_multiple_moment0_peaks'
+        ] = True
+        masked_copy.input.use_peak_deblending = False
            
         with open(default_name,'w') as default_write:
             default_write.write(OmegaConf.to_yaml(masked_copy))

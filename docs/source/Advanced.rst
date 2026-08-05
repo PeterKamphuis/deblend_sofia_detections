@@ -33,6 +33,14 @@ The YAML hierarchy follows these top-level configuration groups:
        internal: Internal = field(default_factory=Internal)
        sofia: Sofia = field(default_factory=Sofia)
 
+Running ``deblend print_examples=true`` writes all user-facing settings to
+``deblend_sofia_detections_default.yml``. The generated starter enables
+``auto_query_catalogue``, ``filter_dr10_markers_by_moment0_peaks``, and
+``deblend_optical_regions_with_multiple_moment0_peaks``, and disables
+``use_peak_deblending``. These four generated-example choices do not change the
+compatibility defaults documented below. The generated
+``directories.data_directory: ???`` value must be replaced before use.
+
 Input Keywords
 --------------
       
