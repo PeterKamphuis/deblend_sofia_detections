@@ -10,7 +10,7 @@ project = 'deblend-sofia-detections'
 copyright = '2025 Peter Kamphuis; 2026 Eric Maina and contributors'
 author = 'Eric Maina; based on the original project by Peter Kamphuis'
 
-release = 'post-1.0.0 (7c83d62)'
+release = 'post-1.0.0 (44532f9)'
 version = '1.0.0+'
 
 # -- General configuration

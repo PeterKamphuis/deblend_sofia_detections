@@ -34,11 +34,12 @@ following references:
    Maina, E. (2026). *deblend-sofia-detections* (Version 1.0.0) [Computer
    software]. https://github.com/3rico/deblend_sofia_detections
 
-   The automatic DR10 counterpart path, optional moment-0 support filter, and
-   per-source Gaia-mask diagnostics were introduced after ``v1.0.0``, in commit
-   ``7c83d62b8310e6b5b9052f93bed4fbd3948d0237``. Until a later release contains
-   them, cite that full commit hash rather than identifying such an analysis as
-   unmodified ``v1.0.0``.
+   The automatic DR10 counterpart path, optional moment-0 support filter,
+   targeted optical-region deblending, and per-source Gaia-mask diagnostics were
+   introduced after ``v1.0.0``. The documented implementation containing all of
+   them is commit ``44532f95bab9d7259a4f081666139907853a7f4b``. Until a later
+   release contains them, cite that full commit hash rather than identifying such
+   an analysis as unmodified ``v1.0.0``.
 
 #. **Peter Kamphuis's original package.** This acknowledges the software
    foundation from which the fork developed:
@@ -97,13 +98,13 @@ the target journal's conventions:
      note    = {Computer software}
    }
 
-   @software{maina_deblend_sofia_detections_7c83d62_2026,
+   @software{maina_deblend_sofia_detections_44532f9_2026,
      author  = {Maina, Eric},
      title   = {deblend-sofia-detections},
-     version = {Git commit 7c83d62b8310e6b5b9052f93bed4fbd3948d0237},
+     version = {Git commit 44532f95bab9d7259a4f081666139907853a7f4b},
      year    = {2026},
-     url     = {https://github.com/3rico/deblend_sofia_detections/tree/7c83d62b8310e6b5b9052f93bed4fbd3948d0237},
-     note    = {Computer software; post-v1.0.0 DR10 and Gaia-diagnostic implementation}
+     url     = {https://github.com/3rico/deblend_sofia_detections/tree/44532f95bab9d7259a4f081666139907853a7f4b},
+     note    = {Computer software; post-v1.0.0 DR10, targeted optical-deblending, and Gaia-diagnostic implementation}
    }
 
    @software{kamphuis_deblend_sofia_detections_2026,

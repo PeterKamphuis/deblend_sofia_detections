@@ -34,12 +34,13 @@ The notes are intentionally pinned to exact committed states:
 * this fork's last tagged release, ``v1.0.0``, commit
   `d78fa1b <https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b>`_;
 * the current documented post-release implementation, commit
-  `7c83d62 <https://github.com/3rico/deblend_sofia_detections/commit/7c83d62>`_.
+  `44532f9 <https://github.com/3rico/deblend_sofia_detections/commit/44532f9>`_.
 
-Only committed additions through ``7c83d62`` are described. The automatic DR10
-and Gaia-diagnostic additions are newer than the ``v1.0.0`` tag. Until they are
-included in a later release, scientific users should record and cite the full Git
-commit rather than identifying those runs as unmodified ``v1.0.0``.
+Only committed additions through ``44532f9`` are described. The automatic DR10,
+targeted optical-region deblending, and Gaia-diagnostic additions are newer than
+the ``v1.0.0`` tag. Until they are included in a later release, scientific users
+should record and cite the full Git commit rather than identifying those runs as
+unmodified ``v1.0.0``.
 
 The fork retains the original project's watershed method, SoFiA input-product
 conventions, counterpart-based filtering, master-mask update, and final field
@@ -47,7 +48,8 @@ re-parameterisation. Its additions concentrate on controlling which sources run,
 recording source-level failures, handling multi-plane optical FITS products, and
 making proposed splits easier to audit scientifically. Post-``v1.0.0`` additions
 also provide opt-in Legacy Surveys DR10 positional counterparts, optional H I
-support filtering for those markers, and explicit Gaia-mask provenance products.
+support filtering for those markers, targeted optical-region deblending, and
+explicit Gaia-mask provenance products.
 
 Summary of additions maintained in this fork
 --------------------------------------------
@@ -82,6 +84,9 @@ Summary of additions maintained in this fork
    * - DR10 marker filtering
      - Optionally retains a selected DR10 marker only when the same optical region
        contains a finite positive, beam-scale parent moment-0 maximum.
+   * - Targeted optical deblending
+     - Optionally applies Photutils multi-threshold deblending only to an optical
+       region containing at least two mapped moment-0 peaks.
    * - Gaia-mask provenance
      - Writes the masked optical background and matching binary mask per source in
        debug mode, including query-success and masked-pixel metadata.
@@ -258,7 +263,39 @@ With ``general.debug: true``, the source directory records:
 The audit includes catalogue identity, morphology, ``flux_g``, optical label,
 accepted/rejected status, matched peak position and value, and rejection reason.
 
-8. Record per-source Gaia masking provenance
+8. Deblend only optical regions containing multiple H I peaks
+--------------------------------------------------------------
+
+The opt-in settings::
+
+  input:
+    deblend_optical_regions_with_multiple_moment0_peaks: true
+    optical_deblend_nlevels: 32
+    optical_deblend_contrast: 0.001
+    optical_deblend_min_pixels: 20
+
+project the beam-scale moment-0 peak map into the raw cyan optical
+segmentation. Photutils multi-threshold deblending is applied only to an
+original cyan label containing at least two peaks; the pixel membership of all
+other labels is preserved. DR10 type filtering and highest-``flux_g`` selection
+then run independently in each resulting sublabel, followed by the moment-0
+acceptance filter. This limits the operation to the peak-selected labels rather
+than applying it to the complete segmentation.
+
+The option requires ``filter_dr10_markers_by_moment0_peaks: true``. It is
+inactive for manual catalogues and when automatic DR10 or optical processing is
+inactive. Debug mode writes the exact cyan segmentations before and after the
+targeted operation as
+``optical_segmentation_before_targeted_deblend_source_<ID>.fits`` and
+``optical_segmentation_after_targeted_deblend_source_<ID>.fits``.
+
+Multiple moment-0 peaks are only a trigger for a candidate optical segmentation.
+They can arise within one rotating or clumpy galaxy, from noise or residual
+foreground structure, or from unsuitable beam metadata. The resulting sublabels
+must be inspected in the H I cube, channel maps, spectra, position-velocity
+structure, and counterpart data before they are interpreted astrophysically.
+
+9. Record per-source Gaia masking provenance
 ---------------------------------------------
 
 In debug mode, commit ``7c83d62`` writes:
@@ -274,8 +311,8 @@ by the package's unmasked fallback. When debug mode is enabled and a cached
 cleaned image lacks these products, the Gaia step is rebuilt so the diagnostics
 correspond to the source being processed.
 
-9. Expand operations documentation and regression coverage
------------------------------------------------------------
+10. Expand operations documentation and regression coverage
+------------------------------------------------------------
 
 The fork complements the original project documentation with a beginner-oriented
 guide covering the cube-mask-catalogue relationship, watershed routes, required
@@ -288,7 +325,9 @@ replacement, WCS-aware QA plots and catalogue records, trial-child overlays,
 multi-axis optical reduction, the standalone converter CLI, manual-only marker
 selection, DR10 query caching and counterpart selection, WCS-aware moment-0
 filtering, nearest-pixel catalogue assignment, debug audit products, and Gaia-mask
-provenance.
+provenance. They also cover targeted optical splitting, preservation of already
+separated regions, peak-map reuse, parameter validation, and the before/after
+segmentation products.
 
 Continuity with the original workflow and scientific limitations
 -----------------------------------------------------------------
@@ -301,6 +340,8 @@ controls are left at their defaults:
 * ``input.auto_query_catalogue: false`` makes no DR10 network request;
 * ``input.filter_dr10_markers_by_moment0_peaks: false`` leaves selected DR10
   markers unfiltered when automatic catalogue mode is enabled;
+* ``input.deblend_optical_regions_with_multiple_moment0_peaks: false`` leaves the
+  initial connected optical segmentation unchanged;
 * ``general.debug: false`` does not generate the new PNG/ECSV QA products.
 
 The exception policy is a version-specific choice: this fork continues after a
@@ -340,3 +381,6 @@ Fork addition history
 * ``7c83d62`` — automatic DR10 catalogue selection, optional beam-scale moment-0
   support filtering, DR10 decision audits, per-source Gaia-mask diagnostics, and
   nearest-pixel catalogue-to-segmentation assignment.
+* ``44532f9`` — opt-in Photutils deblending restricted to optical regions with
+  multiple mapped moment-0 peaks, peak-map reuse, before/after segmentation
+  diagnostics, parameter validation, and focused regression tests.

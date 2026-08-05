@@ -23,9 +23,9 @@ The notes are pinned to reproducible Git revisions:
 | --- | --- | --- |
 | Peter Kamphuis's original project | [`v0.0.4` / `a6daef3`](https://github.com/PeterKamphuis/deblend_sofia_detections/commit/a6daef3) | Foundation and reference revision from which this fork developed. |
 | This fork's last tagged release | [`v1.0.0` / `d78fa1b`](https://github.com/3rico/deblend_sofia_detections/commit/d78fa1b) | Tagged baseline containing selected-source controls, failure reporting, optical QA, multi-plane FITS support, and manual-only markers. |
-| This fork's current documented implementation | [`7c83d62`](https://github.com/3rico/deblend_sofia_detections/commit/7c83d62) | Post-`v1.0.0` implementation adding automatic DR10 counterparts, optional moment-0 support filtering, and Gaia-mask diagnostics. |
+| This fork's current documented implementation | [`44532f9`](https://github.com/3rico/deblend_sofia_detections/commit/44532f9) | Post-`v1.0.0` implementation adding automatic DR10 counterparts, optional moment-0 support filtering, targeted optical-region deblending, and Gaia-mask diagnostics. |
 
-Only committed additions through `7c83d62` are described. Because those latest
+Only committed additions through `44532f9` are described. Because those latest
 features are newer than the `v1.0.0` tag, scientific analyses using them should
 record and cite the full Git commit until a later release is tagged.
 
@@ -41,6 +41,7 @@ record and cite the full Git commit until a later release is tagged.
 | Marker control | `input.manual_markers_only` allows a vetted catalogue to define watershed seeds while automatic detections remain available as QA context. |
 | Automatic catalogue | `input.auto_query_catalogue` can download and cache a field-limited Legacy Surveys DR10 Tractor table when no manual catalogue is supplied. |
 | DR10 marker filtering | `input.filter_dr10_markers_by_moment0_peaks` can require a selected DR10 object's exact optical region to contain a positive, beam-scale parent moment-0 maximum. |
+| Targeted optical deblending | Photutils multi-threshold deblending can be limited to cyan regions containing two or more moment-0 peaks, while other regions retain their existing pixel membership. |
 | Gaia-mask provenance | Debug mode writes the optical cutout immediately after Gaia masking and the matching binary mask, including query-success and masked-pixel metadata. |
 | Documentation and tests | The fork includes an operational guide and focused regression tests for its version-specific controls and QA paths. |
 
@@ -107,7 +108,14 @@ record and cite the full Git commit until a later release is tagged.
    the exact moment-0 input, binary peak map, and an ECSV decision audit; rejected
    catalogue positions remain visible as red crosses.
 
-9. **Per-source Gaia-mask diagnostics.** Debug mode writes the background cutout
+9. **Targeted splitting of blended optical regions.** With
+   `input.deblend_optical_regions_with_multiple_moment0_peaks: true`, Photutils
+   multi-threshold deblending is applied only to a raw cyan region containing at
+   least two beam-scale moment-0 peaks. Other regions retain their existing pixel
+   membership. The DR10 per-region selection and moment-0 filter then operate on
+   the new sublabels.
+
+10. **Per-source Gaia-mask diagnostics.** Debug mode writes the background cutout
    immediately after Gaia masking and a corresponding binary mask under the
    source's `debug_products` directory. FITS headers record whether the Gaia query
    succeeded, the number of masked pixels, and their fraction of the cutout. A
@@ -127,7 +135,8 @@ applies equally to the original project and this fork.
 For the original broad all-source workflow on the new controls, leave
 `input.source_ids` empty, `input.manual_markers_only` false,
 `input.auto_query_catalogue` false, and
-`input.filter_dr10_markers_by_moment0_peaks` false. Set
+`input.filter_dr10_markers_by_moment0_peaks` false, and
+`input.deblend_optical_regions_with_multiple_moment0_peaks` false. Set
 `general.continue_on_source_error: false` if the run must stop at the first
 source-level exception. Debug overlays are only created when `general.debug` is
 enabled.
@@ -470,6 +479,10 @@ input:
   auto_query_catalogue: false
   galaxy_types: [REX, EXP, DEV, SER]
   filter_dr10_markers_by_moment0_peaks: false
+  deblend_optical_regions_with_multiple_moment0_peaks: false
+  optical_deblend_nlevels: 32
+  optical_deblend_contrast: 0.001
+  optical_deblend_min_pixels: 20
 
   use_optical_deblending: true
   use_cube_deblending: true
@@ -560,6 +573,10 @@ but it is not a replacement for the `.par` file from your original SoFiA run.
 | `input.auto_query_catalogue` | `false` | When `true` and no manual catalogue is supplied, download and cache the field subset of `ls_dr10.tractor` from the public NOIRLab Data Lab TAP service. |
 | `input.galaxy_types` | `[REX, EXP, DEV, SER]` | DR10 Tractor morphology types accepted as galaxy counterparts. The comparison is case-insensitive. |
 | `input.filter_dr10_markers_by_moment0_peaks` | `false` | When automatic DR10 selection is active, require a finite positive beam-scale moment-0 maximum inside the selected row's exact cyan optical region. Manual catalogues are never filtered. |
+| `input.deblend_optical_regions_with_multiple_moment0_peaks` | `false` | Run Photutils multi-threshold deblending only on a raw cyan region containing at least two moment-0 peaks. Requires the DR10 moment-0 filter to be enabled. |
+| `input.optical_deblend_nlevels` | `32` | Number of Photutils multi-threshold levels used for targeted optical deblending. |
+| `input.optical_deblend_contrast` | `0.001` | Minimum fraction of a region's flux required for a local optical peak to become a separate sublabel. |
+| `input.optical_deblend_min_pixels` | `20` | Minimum connected pixels above a Photutils threshold required for a targeted object to be deblended. |
 | `input.manual_markers_only` | `false` | When `true`, only manual catalogue positions inside the parent H I mask seed optical watershed runs; automatic optical detections remain QA diagnostics. Requires a manual input table. |
 | `input.manual_optical_image` | `[null]` | Optional celestial-WCS optical FITS image. A 2-D image is used directly; multi-plane images are collapsed over non-celestial axes. Only the first image is currently used. |
 | `input.original_tables` | `false` | Reread supplied text tables instead of using cached pickle files, and force a fresh automatic DR10 download when that mode is active. This is not a backup/safety option. |
@@ -749,6 +766,10 @@ input:
     - DEV
     - SER
   filter_dr10_markers_by_moment0_peaks: true
+  deblend_optical_regions_with_multiple_moment0_peaks: true
+  optical_deblend_nlevels: 32
+  optical_deblend_contrast: 0.001
+  optical_deblend_min_pixels: 20
 ```
 
 The query uses `ls_dr10.tractor`, keeps primary-brick rows, and downloads only the
@@ -783,6 +804,27 @@ seeding; unrelated automatic cyan regions remain unchanged. This option is
 independent of `input.use_peak_deblending`, has no effect when automatic DR10 or
 optical deblending is inactive, and never filters a manual catalogue. Missing or
 invalid parent moment-0 WCS or beam metadata raises a source-level input error.
+
+When
+`input.deblend_optical_regions_with_multiple_moment0_peaks: true`, the same
+peak map is first projected into the raw cyan segmentation. Photutils
+multi-threshold deblending runs only for a cyan label containing at least two
+peaks; every other label is left unchanged. DR10 morphology and highest-`flux_g`
+selection then run independently in each resulting sublabel, followed by the
+moment-0 acceptance filter. This targeted trigger avoids applying Photutils
+deblending globally, which can split structure within an already distinct galaxy.
+The option requires `filter_dr10_markers_by_moment0_peaks: true`, and has no
+effect for manual catalogues or when automatic DR10/optical deblending is inactive.
+`optical_deblend_nlevels`, `optical_deblend_contrast`, and
+`optical_deblend_min_pixels` control the Photutils operation. Lower contrast is
+more aggressive; review the before/after segmentation and QA overlay after any
+parameter change.
+
+This trigger is a segmentation aid, not evidence that the peaks belong to
+different galaxies. A rotating disc, star-forming clumps, residual foreground
+structure, noise, or an imperfect beam model can produce multiple maxima. Treat
+every resulting sublabel as a candidate and apply the full channel-map, spectral,
+position-velocity, and counterpart review described in the beta warning above.
 
 Any non-null entry in `input.manual_input_tables` takes absolute precedence. In
 that case no DR10 request is made, even if `auto_query_catalogue: true`; an
@@ -822,6 +864,8 @@ sofia_output/
             ├── parent_moment0_used_for_dr10_peak_filter_source_42.fits
             ├── moment0_peak_map_source_42.fits
             ├── dr10_moment0_peak_filter_audit_source_42.ecsv
+            ├── optical_segmentation_before_targeted_deblend_source_42.fits
+            ├── optical_segmentation_after_targeted_deblend_source_42.fits
             ├── optical_hi_catalogue_overlay_source_42.png
             ├── optical_hi_components_overlay_source_42.png
             └── catalogue_positions_source_42.ecsv
@@ -849,7 +893,11 @@ Not every file appears for every source:
   selected DR10 identity, morphology, `flux_g`, optical label, decision, matched
   peak coordinate/value, and rejection reason. In the overlays, accepted DR10
   positions remain yellow circles and rejected diagnostic-only positions are
-  red crosses. In
+  red crosses. When targeted optical deblending is enabled, the
+  `optical_segmentation_before_targeted_deblend_source_<ID>.fits` and
+  `optical_segmentation_after_targeted_deblend_source_<ID>.fits` files preserve
+  the exact cyan label maps on either side of Photutils processing. Their headers
+  record the targeted original-label count and deblending parameters. In
   `optical_hi_catalogue_overlay_source_<ID>.png`, the optical cutout is the
   grayscale background, the original H I footprint is purple, faint lavender
   contours show moment-0 intensity, cyan outlines and crosses mark automatically
@@ -1027,9 +1075,10 @@ possible. If this fork contributes to a paper, please cite:
    *The Astrophysical Journal*, 980, 157,
    https://doi.org/10.3847/1538-4357/ad9579.
 
-The automatic DR10 counterpart path, optional moment-0 support filter, and
-per-source Gaia-mask diagnostics were introduced after `v1.0.0`, in commit
-`7c83d62b8310e6b5b9052f93bed4fbd3948d0237`. Until those features appear in a
+The automatic DR10 counterpart path, optional moment-0 support filter, targeted
+optical-region deblending, and per-source Gaia-mask diagnostics were introduced
+after `v1.0.0`. The documented implementation containing all of them is commit
+`44532f95bab9d7259a4f081666139907853a7f4b`. Until those features appear in a
 tagged release, cite that full commit hash instead of describing the analysis as
 using unmodified `v1.0.0`.
 

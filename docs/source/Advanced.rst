@@ -8,10 +8,10 @@ Introduction
 
   We thank Peter Kamphuis for creating and openly sharing the original package on
   which this fork is based. This configuration reference covers the committed
-  implementation through ``7c83d62``. The automatic DR10 and Gaia-diagnostic
-  features are newer than the ``v1.0.0`` tag. See :doc:`Fork_Differences` for the
-  version-pinned lineage and record the full commit when using post-release
-  settings scientifically.
+  implementation through ``44532f9``. The automatic DR10, targeted optical-
+  region deblending, and Gaia-diagnostic features are newer than the ``v1.0.0``
+  tag. See :doc:`Fork_Differences` for the version-pinned lineage and record the
+  full commit when using post-release settings scientifically.
 
 The minimum deblender configuration identifies the parameter file from the
 complete SoFiA run. That file locates the original cube and SoFiA output products;
@@ -106,6 +106,47 @@ Input Keywords
   without automatic DR10 querying and optical deblending. This is independent of
   ``use_peak_deblending``. Missing or invalid parent moment-0 celestial WCS or
   synthesized-beam metadata raises a source-level input error.
+
+**deblend_optical_regions_with_multiple_moment0_peaks**:
+
+  *bool, optional, default = False*
+
+  If True, project the beam-scale moment-0 peak map into the raw Photutils cyan
+  segmentation and apply multi-threshold optical deblending only to a cyan label
+  containing at least two peaks. The pixel membership of labels containing zero
+  or one peak is preserved. DR10 type filtering and highest-``flux_g`` selection
+  are then repeated independently for each new optical sublabel, followed by the
+  moment-0 acceptance filter. This option requires
+  ``filter_dr10_markers_by_moment0_peaks: true`` and has no effect when a manual
+  catalogue takes precedence or automatic DR10/optical processing is inactive.
+  Multiple moment-0 peaks do not by themselves identify multiple galaxies: a
+  rotating disc, clumpy emission, noise, residual foreground structure, or beam
+  metadata can produce them. The generated sublabels therefore require the same
+  channel-map, spectral, position-velocity, and counterpart review as every other
+  candidate split.
+
+**optical_deblend_nlevels**:
+
+  *int, optional, default = 32*
+
+  The number of Photutils multi-threshold levels used for each targeted cyan
+  region. The value must be at least 2.
+
+**optical_deblend_contrast**:
+
+  *float, optional, default = 0.001*
+
+  The minimum fraction of a targeted region's total flux that a local optical
+  peak must contain to become a separate sublabel. Values range from 0 to 1;
+  smaller values produce more aggressive splitting.
+
+**optical_deblend_min_pixels**:
+
+  *int, optional, default = 20*
+
+  The minimum number of connected pixels above a Photutils threshold required
+  for a targeted optical object to be deblended. The value must be a positive
+  integer.
 
 **manual_markers_only**:
 
@@ -260,6 +301,12 @@ General Keywords
   ``flux_g``, optical label, accepted/rejected status, matched peak position and
   value, and rejection reason. The QA overlays show accepted DR10 positions as
   yellow circles and rejected diagnostic-only positions as red crosses.
+  When targeted optical deblending is enabled, the exact cyan segmentation maps
+  before and after Photutils processing are written as
+  ``optical_segmentation_before_targeted_deblend_source_<ID>.fits`` and
+  ``optical_segmentation_after_targeted_deblend_source_<ID>.fits``. Their FITS
+  headers record raw/final label counts, the number and identities of targeted
+  original labels, and the configured Photutils parameters.
   Debug mode also writes ``background_gaia_masked_source_<ID>.fits`` and
   ``gaia_star_mask_source_<ID>.fits``. Their headers record ``GAIA_OK``,
   ``MASKNPIX``, and ``MASKFRAC`` so a failed Gaia query can be distinguished from
