@@ -14,6 +14,7 @@ from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy.table import QTable, Column,vstack,unique
 from xml.parsers.expat import ExpatError
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import urllib.request
 import os
@@ -21,6 +22,161 @@ import warnings
 import numpy as np
 import pickle
 import time
+
+
+def _format_duration(seconds):
+    seconds = int(max(0, round(seconds)))
+    mins, secs = divmod(seconds, 60)
+    hours, mins = divmod(mins, 60)
+    if hours > 0:
+        return f"{hours:02d}:{mins:02d}:{secs:02d}"
+    return f"{mins:02d}:{secs:02d}"
+
+
+def _build_progress_bar(completed, total, width=30):
+    if total <= 0:
+        total = 1
+    fraction = completed / total
+    filled = int(round(width * fraction))
+    filled = max(0, min(width, filled))
+    bar = "#" * filled + "-" * (width - filled)
+    return f"[{bar}] {100.0 * fraction:5.1f}%"
+
+
+def _build_chunk_subcoords(sky_coords, n_chunks, chunk_size):
+    subcoords = []
+    for i in range(n_chunks):
+        for j in range(n_chunks):
+            ra_offset = ((i - n_chunks/2 + 0.5) * chunk_size) / np.cos(sky_coords.dec.to(u.rad).value)
+            dec_offset = (j - n_chunks/2 + 0.5) * chunk_size
+            subcoords.append(SkyCoord(
+                ra=sky_coords.ra + ra_offset.to(u.deg),
+                dec=sky_coords.dec + dec_offset.to(u.deg),
+                frame='fk5'))
+    return subcoords
+
+
+def _query_ned_with_retries(cfg, Ned, query_errors, coords, query_size):
+    table = None
+    for attempt in range(3):
+        try:
+            table = Ned.query_region(coords,
+                radius=np.sqrt(2.0*(query_size/2.)**2), equinox='J2000.0')
+            break
+        except query_errors as e:
+            print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
+            if attempt < 2:
+                time.sleep(5.)
+    return table
+
+
+def _query_ned_chunk_timed(cfg, Ned, query_errors, sub_coords, chunk_size):
+    chunk_started_at = time.time()
+    sub_table = _query_ned_with_retries(cfg, Ned, query_errors, sub_coords, chunk_size)
+    return sub_table, (time.time() - chunk_started_at)
+
+
+def _query_simbad_with_retries(cfg, Simbad, query_errors, coords, query_size):
+    table = None
+    for attempt in range(3):
+        try:
+            lamp = Simbad()
+            lamp.add_votable_fields('main_id', 'ra', 'dec', 'rvz_radvel', 'otype_txt', 'morph_type', 'V')
+            table = lamp.query_region(coords, radius=np.sqrt(2*(query_size/2.)**2))
+            break
+        except query_errors as e:
+            print_log(cfg, f'SIMBAD query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
+            if attempt < 2:
+                time.sleep(5.)
+    return table
+
+
+def _query_simbad_chunk_timed(cfg, Simbad, query_errors, sub_coords, chunk_size):
+    chunk_started_at = time.time()
+    sub_table = _query_simbad_with_retries(cfg, Simbad, query_errors, sub_coords, chunk_size)
+    return sub_table, (time.time() - chunk_started_at)
+
+
+def _query_chunk_timed(worker_fn, worker_args, sub_coords, chunk_size):
+    chunk_started_at = time.time()
+    sub_table = worker_fn(*worker_args, sub_coords, chunk_size)
+    return sub_table, (time.time() - chunk_started_at)
+
+
+def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn,
+    worker_args, service_label):
+    if size_quantity <= max_chunk_size:
+        return worker_fn(*worker_args, sky_coords, size_quantity)
+
+    n_chunks = int(np.ceil((size_quantity/max_chunk_size).decompose().value))
+    chunk_size = size_quantity / n_chunks
+    chunk_tables = []
+    total_chunks = n_chunks**2
+    non_empty_chunk_count = 0
+    empty_chunk_count = 0
+    failed_chunk_count = 0
+    ncpu = max(1, int(getattr(cfg.general, 'ncpu', 1)))
+
+    print_log(cfg,
+        f'Splitting {service_label} query into {total_chunks} chunks with size {chunk_size.to(u.arcmin):.2f}',
+        case=['verbose','screen'])
+    print_log(cfg, f'Using {ncpu} workers for {service_label} chunk queries.', case=['verbose','screen'])
+
+    subcoords = _build_chunk_subcoords(sky_coords, n_chunks, chunk_size)
+    started_at = time.time()
+    completed_chunks = 0
+
+    with ThreadPoolExecutor(max_workers=ncpu) as executor:
+        futures = [
+            executor.submit(_query_chunk_timed, worker_fn, worker_args, sub_coord, chunk_size)
+            for sub_coord in subcoords
+        ]
+        for future in as_completed(futures):
+            sub_table, chunk_elapsed = future.result()
+            if sub_table is None:
+                failed_chunk_count += 1
+            else:
+                if check_table_length(sub_table) > 0:
+                    non_empty_chunk_count += 1
+                    chunk_tables.append(sub_table)
+                else:
+                    empty_chunk_count += 1
+
+            completed_chunks += 1
+            elapsed = time.time() - started_at
+            average_per_chunk = elapsed / completed_chunks
+            eta = average_per_chunk * (total_chunks - completed_chunks)
+            progress_bar = _build_progress_bar(completed_chunks, total_chunks)
+            print(
+                f'\r{service_label} {progress_bar} '
+                f'chunk {completed_chunks}/{total_chunks} '
+                f'chunk_time={chunk_elapsed:5.1f}s '
+                f'elapsed={_format_duration(elapsed)} '
+                f'ETA={_format_duration(eta)}',
+                end='', flush=True)
+    print()
+
+    print_log(cfg,
+        f'{service_label} chunk summary: total={total_chunks}, non_empty={non_empty_chunk_count}, empty={empty_chunk_count}, failed={failed_chunk_count}',
+        case=['verbose','screen'])
+
+    if failed_chunk_count > 0:
+        raise RuntimeError(
+            f'{service_label} chunked query failed: {failed_chunk_count}/{total_chunks} chunks failed.')
+
+    if len(chunk_tables) == 0:
+        return None
+    if len(chunk_tables) == 1:
+        internet_table = chunk_tables[0]
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            internet_table = vstack(chunk_tables)
+
+    print_log(cfg,
+        f'{service_label} chunked query completed with {check_table_length(internet_table)} unfiltered results',
+        case=['screen'])
+    return internet_table
 
 def creating_full_FOV_optical(cfg):
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
@@ -32,7 +188,7 @@ def creating_full_FOV_optical(cfg):
         mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
         mom0_wcs = WCS(mom0_header).celestial
 
-    obj_coords, size_quantity, size_pixels = get_cutout_region(cfg,
+    obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,
         mom0_header=mom0_header,mom0_wcs=mom0_wcs)
     if not cfg.input.manual_optical_image[0] is None:
         
@@ -43,7 +199,7 @@ def creating_full_FOV_optical(cfg):
             manual_path,manual_file = os.path.split(identifier)
             if manual_path == '':
                 manual_path = './'
-            cutout = cut_optical(mom0_header,mom0_wcs,\
+            cutout = cut_optical(cfg,mom0_header,mom0_wcs,\
                 manual_path,
                 manual_file)
 
@@ -89,7 +245,7 @@ Note that redownloading the exact same image may fail if it has recently been re
 
 
 def download_gaia_table(cfg):
-    sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+    sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
     # we are only running this if the user wants dowloads
     if cfg.internal.gaia_table.lower() == 'none':
         from astroquery.gaia import Gaia
@@ -150,22 +306,20 @@ def download_ned_table(cfg):
     
     # we are only running this if the user wants dowloads
     if cfg.internal.ned_table.lower() == 'none':
-        sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+        sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying NED for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.ipac.ned import Ned
         Ned.TIMEOUT = 3600
         Ned.clear_cache()
+        max_chunk_size = 10.0 * u.arcmin
         internet_table = None
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
-        for attempt in range(3):
-            try:
-                internet_table = Ned.query_region(sky_coords, radius=np.sqrt(2.*size_quantity**2), equinox='J2000.0')
-                break
-            except query_errors as e:    
-                print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
-                if attempt < 2:
-                    time.sleep(5. )
-            print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])  
+        internet_table = _run_chunked_query(
+            cfg, sky_coords, size_quantity, max_chunk_size,
+            _query_ned_with_retries, (cfg, Ned, query_errors), 'NED')
+
+        if internet_table is not None:
+            print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])
         if internet_table is None:
             print_log(cfg, 'NED returned an invalid or temporary response; continuing without NED counterpart table.',
                 case=['verbose'])
@@ -175,6 +329,18 @@ def download_ned_table(cfg):
         # we have to correct the units for RA and DEg
         internet_table['RA'].unit=u.deg
         internet_table['DEC'].unit=u.deg
+        # remove duplicates
+        dedupe_keys = [x for x in ['Object Name', 'RA', 'DEC'] if x in internet_table.colnames]
+        if len(dedupe_keys) > 0:
+            internet_table = unique(internet_table, keys=dedupe_keys)   
+
+       
+        #remove the ones that are ouside the cutout region
+        internet_table = internet_table[(internet_table['RA'] >= image_boundaries['ra_min']) 
+            & (internet_table['RA'] <= image_boundaries['ra_max']) &
+            (internet_table['DEC'] >= image_boundaries['dec_min']) & 
+            (internet_table['DEC'] <= image_boundaries['dec_max'])]
+     
         # Astropy is so stupid that it does not provide a QTable from the query
         # so we have to do this as well. 
         result_table = QTable()
@@ -202,36 +368,40 @@ def download_ned_table(cfg):
 def download_simbad_table(cfg):
     # we are only running this if the user wants dowloads
     if cfg.internal.simbad_table.lower() == 'none':
-        sky_coords, size_quantity, size_pixels = get_cutout_region(cfg)
+        sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying Simbad for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.simbad import Simbad
         Simbad.TIMEOUT = 3600
         Simbad.clear_cache()
-        lamp = Simbad()
-        
-        lamp.add_votable_fields('main_id', 'ra', 'dec', 'rvz_radvel', 'otype_txt','morph_type', 'V')
         internet_table = None
+        max_chunk_size = 150.0 * u.arcmin
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
+        internet_table = _run_chunked_query(
+            cfg, sky_coords, size_quantity, max_chunk_size,
+            _query_simbad_with_retries, (cfg, Simbad, query_errors), 'SIMBAD')
 
-
-        for attempt in range(3):
-            try:
-                internet_table = lamp.query_region(sky_coords, radius=np.sqrt(2*size_quantity**2))
-                break
-            except query_errors as e:    
-                print_log(cfg, f'SIMBAD query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
-                if attempt < 2:
-                    time.sleep(5.)
+          
         print_log(cfg, f'SIMBAD query completed with originally {check_table_length(internet_table)} results', case=['screen'])  
         if internet_table is None:
             print_log(cfg, 'SIMBAD returned an invalid or temporary response; continuing without a SIMBAD counterpart.',
                 case=['verbose'])
             return
+        dedupe_keys = [x for x in ['main_id', 'ra', 'dec'] if x in internet_table.colnames]
+        if len(dedupe_keys) > 0:
+            internet_table = unique(internet_table, keys=dedupe_keys)
         
         # as astropy is the dumbest project ever they can not be consistant so 
         # we have to correct the units for RA and DEg
         internet_table['ra'].unit=u.deg
         internet_table['dec'].unit=u.deg
+        print(f'Before filtering, SIMBAD query returned {check_table_length(internet_table)} results')
+        print(image_boundaries)
+        #remove the ones that are ouside the cutout region
+        internet_table = internet_table[(internet_table['ra'] >= image_boundaries['ra_min']) 
+            & (internet_table['ra'] <= image_boundaries['ra_max']) &
+            (internet_table['dec'] >= image_boundaries['dec_min']) & 
+            (internet_table['dec'] <= image_boundaries['dec_max'])]
+        print(f'After filtering, SIMBAD query returned {check_table_length(internet_table)} results')
         # Astropy is so stupid that it does not provide a QTable from the query
         # so we have to do this as well. 
         result_table = QTable()
@@ -239,7 +409,6 @@ def download_simbad_table(cfg):
         requested_columns, requested_dtypes, dummy_units = get_ned_requested_metadata()
   
         for x in requested_columns:
-            
             if translation_table[x] in internet_table.colnames:
                 tmp_column= internet_table[translation_table[x]]
                 tmp_column[tmp_column.mask] = float('NaN')
@@ -269,6 +438,7 @@ def download_simbad_table(cfg):
                 rows.append(False)
 
         search_table = result_table[rows]
+        print_log(cfg, f'SIMBAD query completed with {check_table_length(search_table)} results after filtering', case=['screen'])
         with open(f'{cfg.directories.ancillary_directory}/tables/cached_simbad_table.pkl','wb') as tmp:
             pickle.dump(search_table,tmp) 
         cfg.internal.simbad_table = f'{cfg.directories.ancillary_directory}/tables/cached_simbad_table.pkl'
@@ -295,7 +465,22 @@ def get_cutout_region(cfg,mom0_header=None,mom0_wcs=None):
     #obtain the central coordinates
     ra,dec = mom0_wcs.wcs_pix2world(mom0_header['NAXIS1']/2., mom0_header['NAXIS2']/2.,1.)
     obj_coords = SkyCoord(ra= ra* u.degree, dec= dec * u.degree, frame='fk5')
-    return obj_coords, size_quantity, size_pixels
+
+    ra_min,dec_min = mom0_wcs.wcs_pix2world(0, 0, 1)
+    ra_max,dec_max = mom0_wcs.wcs_pix2world(mom0_header['NAXIS1'], mom0_header['NAXIS2'], 1)
+
+    if ra_min > ra_max:
+        ra_min, ra_max = ra_max, ra_min
+    if dec_min > dec_max:
+        dec_min, dec_max = dec_max, dec_min
+    boundaries = {
+        'ra_min': ra_min*u.deg,
+        'ra_max': ra_max*u.deg,
+        'dec_min': dec_min*u.deg,
+        'dec_max': dec_max*u.deg,
+    }
+
+    return obj_coords, size_quantity, size_pixels,boundaries
 
 
    

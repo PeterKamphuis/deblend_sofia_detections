@@ -52,10 +52,10 @@ def add_to_original(original_data, cut_data,sofia_id = 1):
 
 
 
-def cut_optical(cfg,hdr_over,wcs,dir,image):
+def cut_optical(cfg,hdr_over,wcs,imdir,image):
     '''Cut out the optical image'''
     #load a smaller part from a larger fits image
-    optical_image=fits.open(f'{dir}/{image}',verify_output='ignore')
+    optical_image=fits.open(f'{imdir}/{image}',verify_output='ignore')
    
     try:
         hdr = optical_image[0].header
@@ -258,18 +258,26 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
     maj_sizes = ["sma",'major_axis','maj_ang_size','maj_angsize']
     min_sizes = ["smb",'minor_axis','min_ang_size','min_angsize','e','ellipticity']
     source_counter = 1
-    for i in range(check_table_length(src_table)):
-        if any([np.isnan(src_table["RA"][i]), np.isnan(src_table["DEC"][i]),
-                np.isnan(src_table["PA"][i])]):
-            continue
-        gal_coord = SkyCoord(ra=src_table["RA"][i], dec=src_table["DEC"][i], unit='deg')
-        xcen, ycen = optical_wcs.world_to_pixel(gal_coord) 
-        if xcen > masked_deb.shape[1] or ycen > masked_deb.shape[0] or xcen < 0\
-            or ycen < 0 or np.isnan(xcen) or np.isnan(ycen):
-            print_log(cfg,f"Source {src_table['RA'][i], src_table['DEC'][i]} is outside the image bounds. Skipping."
-                ,case=['debug'])
-            continue  
-       
+    # Pre-filter rows with NaN coordinates/PA and batch-convert to pixel coords
+    all_indices = np.array(range(check_table_length(src_table)))
+    valid = all_indices[~(np.isnan(src_table["RA"][all_indices]) |
+                          np.isnan(src_table["DEC"][all_indices]) |
+                          np.isnan(src_table["PA"][all_indices]))]
+    if len(valid) > 0:
+        all_coords = SkyCoord(ra=src_table["RA"][valid], dec=src_table["DEC"][valid], unit='deg')
+        all_xcens, all_ycens = optical_wcs.world_to_pixel(all_coords)
+        in_bounds = ((all_xcens >= 0) & (all_xcens <= masked_deb.shape[1]) &
+                     (all_ycens >= 0) & (all_ycens <= masked_deb.shape[0]) &
+                     ~np.isnan(all_xcens) & ~np.isnan(all_ycens))
+        valid = valid[in_bounds]
+        all_xcens = all_xcens[in_bounds]
+        all_ycens = all_ycens[in_bounds]
+    else:
+        all_xcens = all_ycens = np.array([])
+    for loop_idx, i in enumerate(valid):
+        xcen = all_xcens[loop_idx]
+        ycen = all_ycens[loop_idx]
+
         sma = 10.* pixel_scale.to(u.arcsec)
         for size in maj_sizes:
             if size in src_table.colnames:
@@ -376,6 +384,8 @@ def split_sources(cfg_in,cube_name, mask,
         for source in split_sources:
             print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
                 ,case=['verbose','screen'])
+            #First we check if we have previous iteration output
+
             source = search_counter_part(cfg,source,basename=watername,
                 query = 'INTERNET',sofia_directory=f'{outdir}/Sofia_Output/',
                 insource='sofia')

@@ -72,7 +72,7 @@ If you want to provide a config file please give the correct name.
 Else press CTRL-C to abort.
 configuration_file = ''')
     cfg = OmegaConf.merge(cfg,inputconf) 
-
+  
     #open the input parameter file to obtain the data cube and output locations
     cfg = read_parameter_input(cfg)
     cfg = directory_check(cfg)  
@@ -146,15 +146,21 @@ def directory_check(cfg):
 
 
 def read_parameter_input(cfg):
-    parameters = load_sofia_input_file(cfg.input.sofia_parameters)
+    
     input_pathname,parameter_file = os.path.split(cfg.input.sofia_parameters)
     cfg.sofia.parameter_file = parameter_file
-   
     if input_pathname == '' or input_pathname[0] != '/':
-        input_pathname = join_path(os.getcwd(),input_pathname)
+        input_pathname = join_path(cfg.directories.run_directory,input_pathname)
     cfg.sofia.parameter_path = input_pathname
+    if os.path.isfile(f'{cfg.sofia.parameter_path}/{cfg.sofia.parameter_file}') == False:
+        print_log(cfg, f"The input parameter file {cfg.sofia.parameter_path}/{cfg.sofia.parameter_file} does not exist.",
+                  case=['verbose'])
+        cfg.sofia.parameter_path = os.getcwd()
+        print_log(cfg, f"Trying {cfg.sofia.parameter_path}/{cfg.sofia.parameter_file} instead.",
+                    case=['verbose'])
+        
+    parameters = load_sofia_input_file(f'{cfg.sofia.parameter_path}/{cfg.sofia.parameter_file}')
     data_path,data_file = os.path.split(parameters['input.data'])
-   
     if data_path == '' or data_path[0] != '/':
         cfg.directories.data_directory = join_path(
             input_pathname,data_path)

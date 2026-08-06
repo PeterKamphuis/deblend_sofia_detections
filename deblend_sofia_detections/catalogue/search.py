@@ -5,7 +5,7 @@ from deblend_sofia_detections.support.table_functions import check_table_length,
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
     isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
-    get_channel_width,get_ned_requested_metadata,calculate_projected_distance_old
+    get_channel_width,get_ned_requested_metadata
 from deblend_sofia_detections.support.logging import print_log
 
 from astropy.io import fits

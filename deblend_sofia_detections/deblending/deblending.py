@@ -11,7 +11,7 @@ from deblend_sofia_detections.support.system_functions import create_directory,j
 from deblend_sofia_detections.support.support_functions import match_size,\
     close_variables
 from deblend_sofia_detections.support.table_functions import read_manual_table
-from deblend_sofia_detections.support.errors import InputError,RunTimeError
+from deblend_sofia_detections.support.errors import RunTimeError
 from astropy.convolution import convolve_fft
 from astropy.io import fits
 from astropy.wcs.utils import proj_plane_pixel_scales
@@ -122,62 +122,7 @@ So we add it to it.''', case=['debug'])
                     mask[results[source]['mask']] = int(long_border)
                     merge = True
     return mask
-           
-'''
-def check_source_surrounded_old(cfg,mask):
-    ""Check if the source in the mask is surrounded by another source.""
-    results = {}
-    sources = np.unique(mask)
-    if len(sources)-1 <= 1:
-        return mask
-    for source in sources:
-        if source == 0:
-            continue
-        # Get the mask for the source
-        source_mask = mask == source
-        results[f'{source}'] = {'id': source, 'surrounded': False, 
-            'mask': source_mask, 'size': np.sum(source_mask),
-            'others': {}}
-       
-        # Check if the source is surrounded by another source
-        # loop through the pixels ignoring the edge
-
-    for i,j in zip(*np.nonzero(mask)):
-        id = mask[i,j]
-        # Check the 8 neighbours
-        neighbours = mask[i-1:i+2, j-1:j+2]
-                #We are only interested in edge pixels
-        if (neighbours == id).all():  # No neighbours
-            results[f'{id}']['size'] -= 1
-            continue
-        if np.all((neighbours == 0) | (neighbours == id)):
-            # We don't care about edge to background border 
-            continue  # We have a border pixel
-        for source in np.unique(neighbours):
-            if source == id or source == 0:
-                continue
-            if f'{source}' not in results[f'{id}']['others']:
-                results[f'{id}']['others'][f'{source}'] = 1
-            else:
-                results[f'{id}']['others'][f'{source}'] += 1.
-    for source in results: 
-        #Get the longest border id
-        if len(results[source]['others']) == 0:
-            continue
-        long_border= int(max(results[source]['others'], key=results[source]['others'].get))
-        if long_border != 0:
-            if results[source]['others'][f'{long_border}'] > results[source]['size']*0.9:
-                results[source]['surrounded'] = True
-                # If the source is surrounded by another source we set the mask to th id
-                
-                print_log(cfg, f''Source {source} is for 95% surrounded by source {long_border}. 
-border with {long_border} = {results[source]['others'][f'{long_border}']} pixels, 
-total border = {results[source]['size']} pixels. 
-So we add it to it.'', case=['debug'])
-                mask[results[source]['mask']] = long_border 
-    
-    return mask
-'''
+ 
 
 
 def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_header= None,
@@ -235,12 +180,6 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
     start= datetime.now()
    
     new_mask = check_source_surrounded(cfg, new_mask_HI)
-    '''
-    else:
-        new_mask = np.zeros_like(new_mask_HI)
-        for i in range(new_mask_HI.shape[0]):
-            new_mask[i,:,:] = check_source_surrounded(cfg, new_mask_HI[i,:,:])
-    '''
     end = datetime.now()
     print_log(cfg, f'''Finished checking if any source is surrounded by another source in the {dimension}D data.
 Time taken: {end - start}''', case=['verbose','screen'])
