@@ -13,6 +13,66 @@ import pickle
 import numpy as np
 import warnings
 
+
+
+
+def check_columns_dtype(cfg,table,dtypes):
+   
+    """Inspect or enforce column dtypes for an astropy table.
+
+    Parameters
+    ----------
+    table : astropy.table.Table or astropy.table.QTable
+        Input table to inspect or update.
+    dtypes : list
+        If empty, return current column dtypes.
+        If non-empty, cast each column to the corresponding dtype.
+
+    Returns
+    -------
+    list or astropy.table.Table
+        Returns list of current dtypes when ``dtypes`` is empty.
+        Returns the updated table when ``dtypes`` is provided.
+    """
+    if dtypes is None:
+        dtypes = []
+
+    if len(dtypes) == 0:
+        return table,[table[col].dtype for col in table.colnames]
+
+    if len(dtypes) != len(table.colnames):
+        print_log(cfg,
+            f"The provided dtypes list does not match the number of table columns",
+            case=["main"])
+
+        raise InputError(
+            "The provided dtypes list does not match the number of "
+            f"table columns ({len(dtypes)} != {len(table.colnames)})."
+        )
+
+    for col, dtype in zip(table.colnames, dtypes):
+        try:
+            target_dtype = np.dtype(dtype)
+            current_dtype = np.dtype(table[col].dtype)
+
+            if target_dtype.kind == 'U' and current_dtype.kind == 'U':
+                current_chars = current_dtype.itemsize // np.dtype('U1').itemsize
+                target_chars = target_dtype.itemsize // np.dtype('U1').itemsize
+                if target_chars < current_chars:
+                    target_dtype = current_dtype
+
+            table[col] = table[col].astype(target_dtype)
+        except Exception as e:
+            print_log(cfg,
+                f"Failed to cast column '{col}' to dtype '{dtype}': {e}",
+                case=["main"])
+            
+            raise InputError(
+                f"Failed to cast column '{col}' to dtype '{dtype}': {e}"
+            )
+
+    return table,[table[col].dtype for col in table.colnames]
+
 def check_table_length(table):
     " Check the length of an astropy table or row"
     if isinstance(table,(QTable)):

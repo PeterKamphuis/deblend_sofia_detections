@@ -9,7 +9,8 @@ from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
     close_variables,get_channel_width
-from deblend_sofia_detections.support.table_functions import check_table_length
+from deblend_sofia_detections.support.table_functions import check_table_length,\
+    check_columns_dtype
 from deblend_sofia_detections.support.logging import print_log
 
 
@@ -18,7 +19,7 @@ from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
-from astropy.table import Table
+from astropy.table import Table,QTable
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 
@@ -326,31 +327,27 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 def split_sources(cfg_in,cube_name, mask, 
         outdir='./', catalogue = False):
     """
-    Split the sources in the deblended 3D data cube.
+    Split the sources in the deblended 3D data cube. by running sofia with the new mask.
     
     Parameters:
-    cube (astropy.io.fits.HDUList): The data cube to split.
-    res3d (np.ndarray): The 3D segmentation map.
-    dir (str): The directory to save the results.
-    catalogue (bool): If True, save the source catalogue.
+    cube_name (str): The data cube to split.
+    mask (np.ndarray): The 3D segmentation map.
+    outdir (str): The directory to save the results.
+    catalogue (bool): If True, save the constructed source catalogue.
     """
 
-    
+    #prepare variable and directories
     cfg = copy.deepcopy(cfg_in) #Making sure to avoid feedback
     path,name = os.path.split(cube_name)
     basename = os.path.splitext(name)[0]
     sofia_temp = load_sofia_input_file()
-    
     if not os.path.exists(f'{outdir}/Sofia_Output/'):
         create_directory('Sofia_Output',base_directory=outdir)
-
-   
     shutil.copy2(mask,f"{outdir}/Sofia_Output/tmp_mask.fits")
     sofia_temp= set_sofia(sofia_temp, cube_name, f"{outdir}/Sofia_Output/tmp_mask.fits",outdir) 
-
-
     write_sofia(sofia_temp,f'{outdir}/Sofia_Output/sofia_input.par')
-    #Run Sofia
+
+    #Prepare to run sofia until all sources are matched.
     matched = False
     counter = 0
     maskhdr= fits.getheader(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
@@ -358,29 +355,35 @@ def split_sources(cfg_in,cube_name, mask,
                     abs(maskhdr['CDELT2'])]))*u.deg,
                        'channel_width': get_channel_width(maskhdr)}
     close_variables(maskhdr)
+
     while not matched:
         # Run sofia
         print_log(cfg,f"Running SoFiA on {cube_name} with mask {mask} in {outdir}/Sofia_Output/sofia_input.par",
             case=['verbose','screen'])
         execute_sofia(cfg,run_directory=f'{outdir}/Sofia_Output/')
+
         #read the ouput table
-       
         print_log(cfg,f"Reading the SoFiA output table from {outdir} the cube {name}",
             case=['verbose'])
         split_sources,table_name =  read_sofia_table(cfg, 
             sofia_directory=f'{outdir}/Sofia_Output/',sofia_basename=basename,
             no_conversion=False) 
-
         print_log(cfg,f"Read the SoFiA output table from {outdir} the cube {name} with {len(split_sources)} sources.",
             case=['verbose','screen'])
         if split_sources is None:
             raise ValueError(f"SoFiA did not produce an output table for {cube_name}. Please check the SoFiA output for errors.")
+
+        #Prepare counterpart search for each source
         id = []
         replace_id = []
-        present_id = [int(x) for x in split_sources['id']]  
+        #present_id = [int(x) for x in split_sources['id']]  
         counterparts = {}  
         watername= os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
         shutil.copy2(f"{outdir}/Sofia_Output/{watername}_mask.fits",f"{outdir}/Sofia_Output/tmp_mask.fits")
+        match_table = None
+        source_dtypes = []
+
+        #loop over the source
         for source in split_sources:
             print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
                 ,case=['verbose','screen'])
@@ -391,15 +394,20 @@ def split_sources(cfg_in,cube_name, mask,
                 insource='sofia')
             source = search_counter_part(cfg,source,basename=watername,
                     query='Manual',sofia_directory=f'{outdir}/Sofia_Output/') 
-         
-            if source['Manual_spectroscopic'] and not source['Manual_Name'][0]\
-                in [x for x in counterparts]:
+           
+            if (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
+                and not source['Manual_Name'][0] in [x for x in counterparts] :
                 source['Name'] =  source['Manual_Name'][0]
             elif source['INTERNET_spectroscopic'] and not \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
                 source['Name'] =  source['INTERNET_Object Name'][0]  
             else:
                 source['Name'] =  source['sofia_name'][0]
+
+           
+            source,source_dtypes = check_columns_dtype(cfg,source,source_dtypes)
+         
+
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
@@ -408,31 +416,33 @@ def split_sources(cfg_in,cube_name, mask,
                 counterparts[source_row['Name']] = source_row['sofia_id']
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has a counterpart in the catalogue. No replacement needed."
                     ,case=['verbose','screen'])
-         
-          
+
             if source_row['Name'] == source_row['sofia_name']:
                 rep = closest_sofia_source(cfg,source_row['sofia_id'],split_sources,
                     header_info = header_info)
                 replace_id.append([int(source_row['sofia_id']),int(rep)])
-                if source_row['sofia_id'] == 4:
-                    print(source_row,rep)
-                    exit()
+               
                  
             else:
                 id.append(source_row['sofia_id'])
-            
+            if catalogue:
+                if match_table is None:
+                    match_table = QTable(source_row,copy=True)
+                else:
+                    match_table.add_row(source_row)
+           
+      
         print_log(cfg,f"Found {len(id)} sources with a counterpart in the catalogue.", case=['verbose','screen'])
         counter += 1
+        # If we have tried too many time we break
         if counter > 50:
             print_log(cfg,f"Warning: More than 50 matching counterparts for {name}.", case=['verbose'])
-            matched = True
-        
+            matched = True        
         maskin= fits.open(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
        
-        #maskin= fits.open(mask)
+        #Checkin what we have
         print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
-            , case=['verbose','screen'])
-            
+            , case=['verbose','screen'])            
         if len(id) == len(split_sources):
             print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose', 'screen'])
             matched = True
@@ -447,15 +457,17 @@ the counterparts map {counterparts}''', case=['verbose','screen'])
                 maskin[0].data[maskin[0].data == pair[0]] = pair[1]
             fits.writeto(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
                  overwrite=True,output_verify='ignore')
-     
+       
+    # Copying the final mask to the output directory 
     shutil.copy2(f'{outdir}/Sofia_Output/tmp_mask.fits',f'{outdir}/final_mask.fits')    
-    
+
+    # Determine whether we need to split
     if np.unique(maskin[0].data).size-1 == 1 or counter  > 50:
         ret_val= False
     else:
         ret_val = True
     close_variables(maskin,split_sources)
-    return ret_val
+    return ret_val, match_table
 
 
 @profile('profiler_logs/subtract_background.log')

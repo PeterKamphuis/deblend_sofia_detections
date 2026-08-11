@@ -10,10 +10,11 @@ from deblend_sofia_detections.support.logging import print_log,start_new_log
 from deblend_sofia_detections.support.system_functions import create_directory,join_path
 from deblend_sofia_detections.support.support_functions import match_size,\
     close_variables
-from deblend_sofia_detections.support.table_functions import read_manual_table
+from deblend_sofia_detections.support.table_functions import read_manual_table,check_table_length
 from deblend_sofia_detections.support.errors import RunTimeError
 from astropy.convolution import convolve_fft
 from astropy.io import fits
+from astropy.table import QTable
 from astropy.wcs.utils import proj_plane_pixel_scales
 from astropy.wcs import WCS
 
@@ -26,6 +27,7 @@ import astropy.units as u
 import copy
 import numpy as np
 import os
+import pickle
 import warnings
 from datetime import datetime
 # -*- coding: future_fstrings -*-
@@ -340,8 +342,9 @@ We will still use any cached tables if available in {cfg.directories.ancillary_d
     else:
         usemoment = True
         usecube = False 
+    final_internet_table = None
     for id in sources['id']:
-        max_source_id = watershed_deblending(cfg,
+        max_source_id,sources_table = watershed_deblending(cfg,
                         cube_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_cube.fits",
                         mask_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_mask.fits",
                         mom0_name=f"{cubelets_dir}{cfg.sofia.basename}_{id}_mom0.fits",
@@ -349,10 +352,22 @@ We will still use any cached tables if available in {cfg.directories.ancillary_d
                         optical_deblending= cfg.input.use_optical_deblending,
                         moment0_deblending=usemoment, cube_deblending=usecube,
                         max_source_id=max_source_id)
+        
+        if not sources_table is None and cfg.logging.save_counterpart_table:
+            if final_internet_table is None:
+                final_internet_table = QTable(sources_table,copy=True)
+            else:
+                for i in range(check_table_length(sources_table)):
+                    final_internet_table.add_row(sources_table[i])
+            sources_table = None
+               
   
     if max_source_id > max_source_id_original:
         rerun_sofia(cfg)
     close_variables(max_source_id,max_source_id_original,sources)
+    if final_internet_table is not None and cfg.logging.save_counterpart_table:
+        with open(f'{cfg.directories.ancillary_directory}/tables/counterpart_table.pkl','wb') as tmp:
+            pickle.dump(final_internet_table,tmp)
   
 
 @profile('profiler_logs/detect_optical_sources.log')
@@ -798,7 +813,7 @@ def watershed_deblending(cfg_in, cube_name = None,
                 else:
                     os.remove(file_path)
   
-    start_new_log(cfg,basedir = outdir,source=sofia_id)
+    start_new_log(cfg,basedir = outdir,source=f'original_{sofia_id}')
      
     #We have to clean all the input
 
@@ -884,10 +899,11 @@ case=['verbose','screen'])
     print_log(cfg, f'''Final mask name: {final_mask_name}
 Which is based on the following deblending results: {results}''',case=['verbose','screen'])
    
-   
+    sources_table = None
     if not final_mask_name is None:  
         print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose','screen'])
-        stil_split = split_sources(cfg,cube_name, final_mask_name, outdir=outdir)  
+        stil_split,sources_table = split_sources(cfg,cube_name, final_mask_name, 
+            outdir=outdir,catalogue=cfg.logging.save_counterpart_table)  
         # skip the background
         # If we are running as a larger sofia run update the catalogue and cubelets
         if stil_split:
@@ -899,13 +915,24 @@ Which is based on the following deblending results: {results}''',case=['verbose'
             update_original_mask(cfg, original_mask_name=
                 f'{cfg.sofia.directory}/{cfg.sofia.basename}_mask.fits',
                 final_mask_name = f'{outdir}final_mask.fits',id = sofia_id)
-           
+            fin_str = f'''We found {check_table_length(sources_table)} sources in the deblended mask'''
+        else:
+            print_log(cfg, f"We're not splitting as we could not find any counterparts to the sources.", case=['verbose','screen'])
+            fin_str= f'''We did not find any counterparts to the sources for the split sources
+Thus we do not deblend.'''  
+    else:
+        fin_str= f'''We could not split this source.'''  
+
+        #    if check_table_length(sources_table) > 1:
+        #        sources_table = None
+                
     
     print_log(cfg, f'''Finished the watershed deblending for the cube {cube_name}. \n 
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
-We found the following results for the deblending of the cube {cube_name}: {results}''', case=['verbose','screen'])   
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n"
+f"We found the following results for the deblending of the cube {cube_name}: {results}
+{fin_str}''', case=['verbose','screen'])
     
-    return max_source_id
+    return max_source_id,sources_table
 
 
 def create_final_mask(cfg, input_mask_name=None, max_source_id=1, sofia_source_id=1,
