@@ -395,14 +395,12 @@ def download_simbad_table(cfg):
         # we have to correct the units for RA and DEg
         internet_table['ra'].unit=u.deg
         internet_table['dec'].unit=u.deg
-        print(f'Before filtering, SIMBAD query returned {check_table_length(internet_table)} results')
-        print(image_boundaries)
+       
         #remove the ones that are ouside the cutout region
         internet_table = internet_table[(internet_table['ra'] >= image_boundaries['ra_min']) 
             & (internet_table['ra'] <= image_boundaries['ra_max']) &
             (internet_table['dec'] >= image_boundaries['dec_min']) & 
             (internet_table['dec'] <= image_boundaries['dec_max'])]
-        print(f'After filtering, SIMBAD query returned {check_table_length(internet_table)} results')
         # Astropy is so stupid that it does not provide a QTable from the query
         # so we have to do this as well. 
         result_table = QTable()

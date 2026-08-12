@@ -230,6 +230,10 @@ def read_parameter_input(cfg):
         cfg.sofia.basename = os.path.splitext(data_file)[0]
     cfg.sofia.directory = join_path( cfg.directories.data_directory 
                                     , parameters['output.directory'])
+
+    if cfg.sofia.original_mask == '':
+        cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask.fits'
+    
     
     return cfg
 
@@ -242,18 +246,18 @@ def background_check(cfg):
         cfg.internal.cleaned_optical_background = f'{cfg.directories.ancillary_directory}/Cleaned_DSS_Optical_Background.fits'
     # if we want original images we delete the processed stuf if existing
     if os.path.isfile(cfg.internal.optical_background) and cfg.input.original_images:
-        if cfg.general.verbose:
+        if cfg.logging.enable:
             print(f'Deleting existing optical background image: {cfg.internal.optical_background}')
         os.remove(cfg.internal.optical_background)
     
     if cfg.input.original_images:
-        if cfg.general.verbose:
+        if cfg.logging.enable:
             print(f'Deleting any existing cleaned optical background image: {cfg.internal.cleaned_optical_background}')
         path,name = os.path.split(cfg.internal.cleaned_optical_background)
         basename = os.path.splitext(name)[0]
         for file in os.listdir(path):
             if file.startswith(basename):
-                if cfg.general.verbose:
+                if cfg.logging.enable:
                     print(f'Deleting existing cleaned optical background image: {join_path(path,file)}')
                 os.remove(join_path(path,file))
      

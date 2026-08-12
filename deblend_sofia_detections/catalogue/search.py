@@ -53,7 +53,6 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
     
     search_table = sort_on_distance(cfg,search_table, coordinates,
         vsys,header_info=header_info,spectroscopic=spectroscopic)
-    print(search_table)
     print_log(cfg,f'''Searching for {table_source} counterpart for {source[f'{prefix}id']}
 Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(cfg,coordinates[0].value,coordinates[1].value))}
 The nearest target is {search_table['Object Name'][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}

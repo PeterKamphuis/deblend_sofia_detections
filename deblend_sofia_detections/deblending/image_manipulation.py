@@ -35,6 +35,7 @@ import numpy as np
 import os
 import pickle
 import shutil
+import warnings
 
 
 
@@ -162,15 +163,23 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     gaia_table = gaia_table[0:int(len(gaia_table)*.5)]  # Limit to the upper half of the brightness distribution
     star_coords = SkyCoord(ra=gaia_table["ra"], dec=gaia_table["dec"],
                             unit=(u.deg, u.deg), frame='fk5')
-   
+    
     x, y = optical_wcs.world_to_pixel(star_coords)
+   
     # these are magnitude so the smaller they are the brighter the star is
-    individual_radius = (np.median(gaia_table["phot_rp_mean_mag"])/
-        gaia_table["phot_rp_mean_mag"])**3 * radius_pixels  # Example scaling factor for radius
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        # This line complains typically about not taken
+        # python3.13/site-packages/numpy/_core/fromnumeric.py:840: UserWarning: Warning: 'partition' will ignore the 'mask' of the MaskedColumn.
+        #  a.partition(kth, axis=axis, kind=kind, order=order)
+        individual_radius = (np.median(gaia_table["phot_rp_mean_mag"])/
+            gaia_table["phot_rp_mean_mag"])**3 * radius_pixels  # Example scaling factor for radius
+   
     individual_radius[individual_radius <radius_pixels] = radius_pixels
 
     # Mask stars
     print_log(cfg,f"Masking {len(x)} stars in the optical image.",case=['verbose','screen'])
+   
     yy, xx = np.indices(optical_image.data.shape)
     
     # Memory-efficient chunked approach
@@ -188,7 +197,7 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     
     valid_mask = ((x_arr >= 0) & (x_arr < width) & 
                   (y_arr >= 0) & (y_arr < height))
-
+    
     x_valid = x_arr[valid_mask]
     y_valid = y_arr[valid_mask]
     r_valid = r_arr[valid_mask]
@@ -223,7 +232,7 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
         
         # Update the star mask with OR operation
         star_mask |= np.any(chunk_masks, axis=0)
- 
+    print()
     # Mask the stars in the optical image
    
     print_log(cfg,f'''\r Processing chunks 100.0 % done.\n 
@@ -429,8 +438,6 @@ def split_sources(cfg_in,cube_name, mask,
             else:
                 id.append(source_row['sofia_id'])
             if catalogue:
-                print(f'I hate astropy')    
-                print(source_row['Manual_Object Name'],source_row['Manual_Object Name'].dtype, len(source_row.colnames))
                 
                 if match_table is None:
                     match_table = QTable(source_row,copy=True)
@@ -494,8 +501,10 @@ def subtract_background(cfg,image,wcs):
         else int(3.*cfg.internal.optical_kernel_fwhm)
     
     box_size = [boxin, boxin]  # box size for background estimation
-    background = Background2D(image, box_size)
-    new_image = image - background.background
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        background = Background2D(image, box_size)
+        new_image = image - background.background
     new_wcs = copy.deepcopy(wcs)
     close_variables(image,background,wcs)
     return new_image,new_wcs

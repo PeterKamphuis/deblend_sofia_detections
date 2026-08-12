@@ -28,6 +28,7 @@ import copy
 import numpy as np
 import os
 import pickle
+import shutil
 import warnings
 from datetime import datetime
 # -*- coding: future_fstrings -*-
@@ -542,7 +543,7 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         wcs= WCS(data[0].header).celestial
     hi_header = copy.deepcopy(data[0].header)
 
-  
+    
 
 
     bckgrnd,bckgrnd_wcs = get_background(cfg, match_header= hi_header, wcs=wcs)
@@ -550,18 +551,19 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
    
     
     print_log(cfg,f"Creating a gaia mask for the optical image.", case=['verbose'])
-    
-   
+      
 
     if cfg.internal.gaia_table != 'none': 
-        gaia_mask,no_gaia_mask = mask_gaia_stars(cfg,bckgrnd,bckgrnd_wcs)                                          
+        gaia_mask,no_gaia_mask = mask_gaia_stars(cfg,bckgrnd,bckgrnd_wcs)  
+                                    
     else:
         print_log(cfg,f"Continuing without masking Gaia stars.", case=['verbose'])
         gaia_mask = np.zeros_like(bckgrnd).astype(bool) 
         no_gaia_mask = True
+   
     masked_bckgrnd = copy.deepcopy(bckgrnd)
     masked_bckgrnd_wcs = copy.deepcopy(bckgrnd_wcs)
-  
+   
     print_log(cfg,f"Applying a gaia mask for the optical image.", case=['verbose'])
     masked_bckgrnd[gaia_mask] = np.nan  # Mask Gaia stars in the optical image
     close_variables(gaia_mask,bckgrnd,bckgrnd_wcs)    
@@ -901,6 +903,7 @@ We will not deblend it again as this lead to different and unreliable results.''
 case=['verbose','screen'])
         if not os.path.exists(cfg.internal.cleaned_optical_background):
             prepare_background_optical_image(cfg,cube,source_id=sofia_id,outdir=outdir)
+       
         # Then we set markers based on the optical image and our input tables
         # but only within our HI mask 
         optical_markers,markers_header = set_optical_markers(cfg, sofia_id, mask[0].data,outdir=outdir)
@@ -976,10 +979,18 @@ Which is based on the following deblending results: {results}''',case=['verbose'
                 f'{cfg.sofia.directory}/{cfg.sofia.original_mask}',
                 final_mask_name = f'{outdir}final_mask.fits',id = sofia_id)
             fin_str = f'''We found {check_table_length(sources_table)} sources in the deblended mask'''
+
         else:
             print_log(cfg, f"We're not splitting as we could not find any counterparts to the sources.", case=['verbose','screen'])
             fin_str= f'''We did not find any counterparts to the sources for the split sources
 Thus we do not deblend.'''  
+        if  'ALL' in cfg.logging.debug_functions or 'WATERSHED_DEBLENDING' in cfg.logging.debug_functions:
+            pass
+        else:
+            print(f"Cleaning up intermediate files in {outdir}")
+            shutil.rmtree(f'{outdir}/Sofia_Output')
+          
+        
     else:
         fin_str= f'''We could not split this source.'''  
 

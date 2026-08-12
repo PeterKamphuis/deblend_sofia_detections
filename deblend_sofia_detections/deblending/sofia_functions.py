@@ -150,7 +150,7 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
    
     print_log(cfg,sofia_run.decode("utf-8"),case=['verbose'])   
     print_log(cfg,sofia_warnings_are_annoying.decode("utf-8"),case=['debug'])
-        #print(sofia_warnings_are_annoying.decode("utf-8"))
+    
     if sfrun.returncode == 8:
         with open(f'sofia_output.txt','w') as file:
             file.writelines(sofia_run.decode("utf-8"))
@@ -327,15 +327,15 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
             old_name = f'{indir}{basename}_cubelets/{basename}_{old_new_ids[new_id]}{g}'
             if os.path.exists(old_name):
                 new_name = f'{cfg.sofia.directory}/{originalbasename}_cubelets/{originalbasename}_{new_id}{g}'
-                #print(f'Moving {old_name} to {new_name}')
+          
                 os.rename(old_name, new_name)        
     #And remove the original unsplit source
     original_source_file = f'{cfg.sofia.directory}/{originalbasename}_cubelets/{originalbasename}_{original_id}'
     for g in to_move:
         file_to_remove = f'{original_source_file}{g}'
-        #print(f'Trying to remove {file_to_remove}')
+      
         if os.path.exists(file_to_remove):
-            #print(f'Removing {file_to_remove}')
+         
             os.remove(file_to_remove)
 
        
@@ -361,7 +361,7 @@ def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=
         sofia_basename = cfg.sofia.basename   
     
     full_base = f'{sofia_directory}{sofia_basename}'
-    print(f'Looking for sofia catalogue in {full_base}_cat.xml or {full_base}_cat.txt')
+  
     if os.path.isfile(f'{full_base}_cat.xml') and not force_text:
         #If we have an xml we prefer to read that
         table_name = f'{full_base}_cat.xml'

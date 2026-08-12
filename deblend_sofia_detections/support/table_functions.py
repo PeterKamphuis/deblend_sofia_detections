@@ -54,8 +54,6 @@ def check_columns_dtype(cfg,table,dtypes_in):
         )
 
     for col in table.colnames:
-        print(f"Checking column '{col}' with target dtype '{dtypes}'")
-
         try:
             target_dtype = np.dtype(dtypes[col])
             current_dtype = np.dtype(table[col].dtype)
@@ -65,8 +63,6 @@ def check_columns_dtype(cfg,table,dtypes_in):
                 target_chars = target_dtype.itemsize // np.dtype('U1').itemsize
                 if target_chars < current_chars:
                     target_dtype = current_dtype
-            print(f"Casting column '{col}' from {current_dtype} to {target_dtype}")
-
             table[col] = table[col].astype(target_dtype)
         except Exception as e:
             print_log(cfg,
@@ -256,7 +252,7 @@ def identify_velocity_column(cfg,table):
     Returns:
     - Updated table with the identified velocity column.
     """
-    print(table.colnames)
+  
     possible_velocity_columns = ['v_rad', 'v_sofia','cz','v_opt'
         ,'vel','vsys','v_sys','v_hel','v_optical', 'v_helio', 'v_lsr']
     found = False

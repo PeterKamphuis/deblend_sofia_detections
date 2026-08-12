@@ -28,10 +28,7 @@ def calculate_projected_distance(coord1,coord2,no_PA=False):
     projected_PA=((np.degrees(np.arcsin(((coord1[1][:].to(u.deg)-coord2[1].to(u.deg))\
                                     /separation.to(u.deg)).value)))+90.)*u.deg
     
-    for i,sep in enumerate(separation):
-        print(f'coord1: {coord1[1][i]-coord2[1]}, {separation[i]} PA = {projected_PA[i]}')
-
-    exit()
+   
     diff=coord1[0][:]-coord2[0]
     projected_PA[diff > 0] = 360.*u.deg - projected_PA[diff > 0]
    
@@ -394,7 +391,6 @@ def read_unit_part(input_string,transform_in):
     proc_unit = tmp[0].strip()
     #if we still have a trans form we pass
     if len(proc_unit.split('/')) > 1 or len(proc_unit.split('*')) > 1:
-        #print(f'WARNING: The unit {proc_unit} contains a transformation {transform_in} that is not supported. Skipping this part.')
         proc_unit = None
         remainder = transform_in
         pass
