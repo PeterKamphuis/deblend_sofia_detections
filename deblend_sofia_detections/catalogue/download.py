@@ -183,9 +183,10 @@ def creating_full_FOV_optical(cfg):
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
    
     print_log(cfg, f'Quering the Sky Survey', case=['verbose'])
+    cube_ext = cfg.internal.cube_ext
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
+        mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0{cube_ext}')
         mom0_wcs = WCS(mom0_header).celestial
 
     obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,

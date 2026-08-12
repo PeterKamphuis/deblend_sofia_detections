@@ -353,7 +353,7 @@ def split_sources(cfg_in,cube_name, mask,
     maskhdr= fits.getheader(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
     header_info = {'pixelsize': float(np.mean([abs(maskhdr['CDELT1']),
                     abs(maskhdr['CDELT2'])]))*u.deg,
-                       'channel_width': get_channel_width(maskhdr)}
+                       'channel_width': get_channel_width(maskhdr,velocity=True)}
     close_variables(maskhdr)
 
     while not matched:
@@ -372,6 +372,10 @@ def split_sources(cfg_in,cube_name, mask,
             case=['verbose','screen'])
         if split_sources is None:
             raise ValueError(f"SoFiA did not produce an output table for {cube_name}. Please check the SoFiA output for errors.")
+        if len(split_sources) == 1:
+            print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose','screen'])
+            matched = True
+            break
 
         #Prepare counterpart search for each source
         id = []
@@ -381,7 +385,7 @@ def split_sources(cfg_in,cube_name, mask,
         watername= os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
         shutil.copy2(f"{outdir}/Sofia_Output/{watername}_mask.fits",f"{outdir}/Sofia_Output/tmp_mask.fits")
         match_table = None
-        source_dtypes = []
+        source_dtypes = {}
 
         #loop over the source
         for source in split_sources:
@@ -392,22 +396,23 @@ def split_sources(cfg_in,cube_name, mask,
             source = search_counter_part(cfg,source,basename=watername,
                 query = 'INTERNET',sofia_directory=f'{outdir}/Sofia_Output/',
                 insource='sofia')
-            source = search_counter_part(cfg,source,basename=watername,
-                    query='Manual',sofia_directory=f'{outdir}/Sofia_Output/') 
            
+            source = search_counter_part(cfg,source,basename=watername,
+                query='Manual',sofia_directory=f'{outdir}/Sofia_Output/') 
+            
             if (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
-                and not source['Manual_Name'][0] in [x for x in counterparts] :
-                source['Name'] =  source['Manual_Name'][0]
+                and not source['Manual_Object Name'][0] in [x for x in counterparts]\
+                and source['Manual_Object Name'][0] != 'NaN':
+                source['Name'] =  source['Manual_Object Name'][0]
+               
             elif source['INTERNET_spectroscopic'] and not \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
                 source['Name'] =  source['INTERNET_Object Name'][0]  
             else:
                 source['Name'] =  source['sofia_name'][0]
-
            
             source,source_dtypes = check_columns_dtype(cfg,source,source_dtypes)
          
-
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
@@ -421,11 +426,12 @@ def split_sources(cfg_in,cube_name, mask,
                 rep = closest_sofia_source(cfg,source_row['sofia_id'],split_sources,
                     header_info = header_info)
                 replace_id.append([int(source_row['sofia_id']),int(rep)])
-               
-                 
             else:
                 id.append(source_row['sofia_id'])
             if catalogue:
+                print(f'I hate astropy')    
+                print(source_row['Manual_Object Name'],source_row['Manual_Object Name'].dtype, len(source_row.colnames))
+                
                 if match_table is None:
                     match_table = QTable(source_row,copy=True)
                 else:

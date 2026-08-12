@@ -16,7 +16,7 @@ import warnings
 
 
 
-def check_columns_dtype(cfg,table,dtypes):
+def check_columns_dtype(cfg,table,dtypes_in):
    
     """Inspect or enforce column dtypes for an astropy table.
 
@@ -34,13 +34,16 @@ def check_columns_dtype(cfg,table,dtypes):
         Returns list of current dtypes when ``dtypes`` is empty.
         Returns the updated table when ``dtypes`` is provided.
     """
+    dtypes = copy.deepcopy(dtypes_in)
     if dtypes is None:
-        dtypes = []
+        dtypes = {}
 
     if len(dtypes) == 0:
-        return table,[table[col].dtype for col in table.colnames]
+        for col, dtype in zip(table.colnames, [table[col].dtype for col in table.colnames]):
+            dtypes[col] = table[col].dtype
+        return table,dtypes
 
-    if len(dtypes) != len(table.colnames):
+    if len([x for x in dtypes]) != len(table.colnames):
         print_log(cfg,
             f"The provided dtypes list does not match the number of table columns",
             case=["main"])
@@ -50,9 +53,11 @@ def check_columns_dtype(cfg,table,dtypes):
             f"table columns ({len(dtypes)} != {len(table.colnames)})."
         )
 
-    for col, dtype in zip(table.colnames, dtypes):
+    for col in table.colnames:
+        print(f"Checking column '{col}' with target dtype '{dtypes}'")
+
         try:
-            target_dtype = np.dtype(dtype)
+            target_dtype = np.dtype(dtypes[col])
             current_dtype = np.dtype(table[col].dtype)
 
             if target_dtype.kind == 'U' and current_dtype.kind == 'U':
@@ -60,18 +65,19 @@ def check_columns_dtype(cfg,table,dtypes):
                 target_chars = target_dtype.itemsize // np.dtype('U1').itemsize
                 if target_chars < current_chars:
                     target_dtype = current_dtype
+            print(f"Casting column '{col}' from {current_dtype} to {target_dtype}")
 
             table[col] = table[col].astype(target_dtype)
         except Exception as e:
             print_log(cfg,
-                f"Failed to cast column '{col}' to dtype '{dtype}': {e}",
+                f"Failed to cast column '{col}' to dtype '{dtypes[col]}': {e}",
                 case=["main"])
             
             raise InputError(
-                f"Failed to cast column '{col}' to dtype '{dtype}': {e}"
+                f"Failed to cast column '{col}' to dtype '{dtypes[col]}': {e}"
             )
 
-    return table,[table[col].dtype for col in table.colnames]
+    return table,dtypes
 
 def check_table_length(table):
     " Check the length of an astropy table or row"
@@ -250,6 +256,7 @@ def identify_velocity_column(cfg,table):
     Returns:
     - Updated table with the identified velocity column.
     """
+    print(table.colnames)
     possible_velocity_columns = ['v_rad', 'v_sofia','cz','v_opt'
         ,'vel','vsys','v_sys','v_hel','v_optical', 'v_helio', 'v_lsr']
     found = False
@@ -271,7 +278,8 @@ def identify_velocity_column(cfg,table):
     if found:   
         return table
     else:
-        raise TableError('No velocity column found in the table.')
+        raise TableError(f'''No velocity column found in the table.
+These are the available columns {table.colnames} and their units {[table[col].unit for col in table.colnames]}''')
     
 
 def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):

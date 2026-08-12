@@ -3,7 +3,7 @@ from deblend_sofia_detections.support.profiling import profile
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
 from deblend_sofia_detections.support.logging import print_log
-
+from deblend_sofia_detections.support.constants import C, rest_HI
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
@@ -197,7 +197,7 @@ convertRADEC.__doc__ =f'''
  NOTE:
 '''
 
-def get_channel_width(hdr):
+def get_channel_width(hdr,velocity=False):
     chwidth = hdr['CDELT3']
     if 'CUNIT3' in hdr:
         if hdr['CUNIT3'].lower() == 'm/s':
@@ -218,6 +218,13 @@ def get_channel_width(hdr):
         else:
             chwidth *= u.m/u.s
             print(f'Your cube does not have a CUNIT3 keyword, but the channel width is {chwidth}. We will assume it is in m/s')
+    if velocity:
+        if chwidth.unit.is_equivalent(u.Hz):
+            chwidth = (-C.to(u.km/u.s) * chwidth.to(u.Hz) / rest_HI.to(u.Hz)).decompose().to(u.km/u.s)
+        if chwidth.unit.is_equivalent(u.km/u.s):
+            pass
+        else:
+            raise UnitError(f'Your cube has a CUNIT3 of {hdr["CUNIT3"]} which is not recognized as a velocity unit. Please make sure it is in m/s, km/s, Hz or kHz')
     return chwidth
 
 def get_nan_for_dtype(dtype):

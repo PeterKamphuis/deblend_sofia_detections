@@ -7,6 +7,7 @@ from deblend_sofia_detections.support.support_functions import convertRADEC,\
     isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
     get_channel_width,get_ned_requested_metadata
 from deblend_sofia_detections.support.logging import print_log
+from deblend_sofia_detections.support.constants import C,rest_HI
 
 from astropy.io import fits
 from astropy.table import QTable,Table,vstack
@@ -48,7 +49,7 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
             
     coordinates = [source[f'{prefix}ra'],source[f'{prefix}dec']]
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region)
+        counterpart_region=cfg.input.counterpart_region)
     
     search_table = sort_on_distance(cfg,search_table, coordinates,
         vsys,header_info=header_info,spectroscopic=spectroscopic)
@@ -105,7 +106,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
                 'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),
                     abs(cube[0].header['CDELT2'])]))*u.deg,
-                'channel_width': get_channel_width(cube[0].header) 
+                'channel_width': get_channel_width(cube[0].header,velocity=True) 
                 }
    
     # first try a spectroscopic match
@@ -128,7 +129,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 warnings.simplefilter("ignore")
                 spectroscopic_table = vstack([spectroscopic_table_ned, spectroscopic_table_simbad])
             vsys, radius = set_search_radius(cfg,source,header_info,150.*u.km/u.s,
-                counterpart_region=cfg.general.counterpart_region)
+                counterpart_region=cfg.input.counterpart_region)
             coord = [source[f'ra'],source[f'dec']]
             spectroscopic_table = sort_on_distance(cfg,spectroscopic_table, 
                 coord,vsys,header_info=header_info)
@@ -143,13 +144,12 @@ def search_counter_part(cfg,source,sofia_directory= './',
         search_id = 'INTERNET'
         pref =''
     elif query.upper() == 'MANUAL':
-        print(f'!!!!!!!!{cfg.input.spectroscopic_manual_counterparts}!!!!!!!!!1')
         spectroscopic_table = find_counterpart(cfg,source, header_info,
             sysrange=150.*u.km/u.s,table_source='MANUAL',
             spectroscopic=cfg.input.spectroscopic_manual_counterparts)
         search_id = 'Manual'
         pref = 'sofia_'
-        print(spectroscopic_table)
+        
   
    
     if check_table_length(spectroscopic_table) > 0:
@@ -169,10 +169,14 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 get_ned_requested_metadata(include_extra=True)
         
         if query.upper() == 'MANUAL':
-            manual_table = read_manual_table(cfg,need_velocity=False)
+            if cfg.input.manual_input_tables[0] is None:
+                manual_table = QTable(names=['Object Name'],dtype=['str'])
+            else:
+                manual_table = read_manual_table(cfg,need_velocity=True)
+           
             # Add the difference columns 
-            add_units = [u.km/u.s,u.deg, u.km/u.s, u.dimensionless_unscaled]
-            for i,col in enumerate(['Velocity','Spatial Diff','Velocity Diff','Combined Diff']):
+            add_units = [u.deg, u.km/u.s, u.dimensionless_unscaled]
+            for i,col in enumerate(['Spatial Diff','Velocity Diff','Combined Diff']):
                 if col not in manual_table.colnames:
                     manual_table.add_column(np.nan,name=col)
                     manual_table[col].unit = add_units[i]
@@ -310,6 +314,7 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
         if np.all(np.array(weights) == 1.) and not header_info is None:
             weights = [header_info['pixelsize'], 
                        header_info['channel_width']]
+            
         print_log(cfg,f'Using weights {weights}',case=['debug'])
         if spectroscopic:
             #throw all entries that have velocity nan out of the table, as we cannot use them for the distance calculation
@@ -323,10 +328,12 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
    
         if not vsys is None:
             velocities = table['Velocity'].to(u.km/u.s)
-            if isquantity(velocities):
-                velocities = velocities
-            if isquantity(vsys):
-                vsys = vsys.to(u.km/u.s)
+           
+            if not isquantity(vsys):
+                raise InputError(f'vsys is not a quantity but {type(vsys)}')
+            
+            vsys = vsys.to(u.km/u.s)
+           
             table['Velocity Diff'] = [abs(vsys-z)\
                 for z in velocities]
 

@@ -6,6 +6,7 @@ from deblend_sofia_detections.support.support_functions import \
     get_start_end_locations,convert_pixel_values_to_original
 from deblend_sofia_detections.support.system_functions import convert_ps,join_path
 from deblend_sofia_detections.support.logging import print_log
+from deblend_sofia_detections.support.constants import C,rest_HI
 try:
     from importlib.resources import open_text as pack_open_txt
 except ImportError:
@@ -45,6 +46,19 @@ def check_parameters(table,variables=None,no_conversion=False):
                 trig = True    
         else:
             trig = True
+
+        if trig and value.lower() in ['v_sofia']:
+            for check in table.colnames:
+                if 'freq' in check.lower():
+                    # replace the freq with v_sofia in the new name
+                    new_column = check.replace('freq','v_sofia')
+                 
+                    table[new_column] = [(C.to(u.km/u.s)*(1-x.to(u.Hz)/rest_HI).decompose().value).value for x in table[check]]*u.km/u.s
+                    #table[new_column].unit = u.km/u.s
+                    velocity = new_column
+                    trig = False
+                    break
+            
 
         if trig:
            raise InputError(f'''SOFIA_CATALOGUE: We cannot find the required column for {value} in the sofia catalogue.
@@ -122,7 +136,7 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
             if distance < min_distance:
                 min_distance = distance
                 closest_source_id = row[f'{prefix}id']
-
+   
     return closest_source_id
 
 
@@ -150,7 +164,8 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
         os.chdir(indir)    
         raise SofiaError(f'Sofia run failed with return code {sfrun.returncode}. Check sofia_output.txt for details.')
     else:
-        if cfg.logging.enable_log and cfg.logging.debug:
+        if cfg.logging.enable_log and\
+            ('EXECUTE_SOFIA' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions):
             with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
                 file.writelines(sofia_run.decode("utf-8"))
            
@@ -331,6 +346,10 @@ def obtain_sofia_id(base_name, cube_name):
     split_main = cube_file.split(base_name)
     parts = split_main[1].split('_')
     id  = parts[1]
+    try:
+        int(id)
+    except ValueError:
+        id = '1'
     return id,cube_file
 
 def read_sofia_table(cfg,no_conversion=False,force_text = False,sofia_directory=None,

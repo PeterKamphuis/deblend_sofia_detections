@@ -67,59 +67,65 @@ linenumber.__doc__ =f'''
 '''
 
 def print_log(cfg,log_statement, case = ['main']):
-   
-
     if not cfg.logging.enable:
-        #if logging is disabled, we run completely silent
+        # If logging is disabled, we run completely silent.
         return
-    
+
+    case_set = set(case)
+    debug_case = {'debug_start', 'debug_add', 'debug'}
+    has_debug_case = bool(case_set & debug_case)
+
+    debug_functions = [x.lower() for x in cfg.logging.debug_functions]
+    no_debug = 'none' in debug_functions
+    debug_all = 'all' in debug_functions
+
     debugging = False
-    # empty tels line number to just add some spacing in front of the log statement,
-    debug= 'empty'
-    if cfg.logging.debug:
-        trig=False
-        if 'ALL' in cfg.logging.debug_functions:
-            trig = True
-        else:
-            # get the function  
+    debug = 'empty'  # Keep indentation spacing when no debug info is added.
+
+    if not no_debug:
+        trig = debug_all
+        if not trig:
+            current_function = None
             for key in stack():
-                if key[3] != 'linenumber' and key[3] != 'print_log' and key[3] != '<module>': 
-                    current_function= f"{key[3]}"
+                if key[3] not in ['linenumber', 'print_log', '<module>']:
+                    current_function = key[3]
                     break
-            if current_function.lower() in [x.lower() for x in  cfg.logging.debug_functions]:
-                trig=True      
+            if current_function is not None:
+                trig = current_function.lower() in debug_functions
+
         if trig:
-            debugging=True    
-            if 'debug_start' in case:
-                debug = 'long'
-            else:
-                debug= 'short'
+            debugging = True
+            debug = 'long' if 'debug_start' in case_set else 'short'
+
     log_statement = f"{linenumber(debug=debug)}{log_statement} \n"
 
-    #Now lets check wether we want to print this specifc statement 
-    print_screen = False
-    print_log = False
-    
-    if cfg.logging.enable_log: 
-        # If we want a log we have to check this specific message
-        if 'main' in case or 'screen' in case or\
-            (debugging and ('debug_start' in case or 'debug_add' in case or 'debug' in case))\
-            or ('verbose' in case and (cfg.logging.verbose_log or debugging)):
-            print_log = True
-    #if we have a verbose screen we also want to print this specific message to the screen        
-    if cfg.logging.verbose_screen:
-        # If we want to print to the screen we have to check this specific message
-        if 'main' in case or\
-            (debugging and ('debug_start' in case or 'debug_add' in case or 'debug' in case))\
-            or ('verbose' in case ):
-            print_screen = True
-    #We always print screen messages to the screen unless logging.enable = false
-    if 'screen' in case:
-        print_screen = True
+    is_main = 'main' in case_set
+    is_screen = 'screen' in case_set
+    is_verbose = 'verbose' in case_set
 
-    if print_screen:
+    should_log = (
+        cfg.logging.enable_log and (
+            is_main
+            or is_screen
+            or (debugging and has_debug_case)
+            or (is_verbose and (cfg.logging.verbose_log or debugging))
+        )
+    )
+
+    should_screen = (
+        is_screen
+        or (
+            cfg.logging.verbose_screen and (
+                is_main
+                or (debugging and has_debug_case)
+                or is_verbose
+            )
+        )
+    )
+
+    if should_screen:
         print(log_statement)
-    if print_log:
+    if should_log:
         with open(f'{cfg.logging.log_file}','a') as log_file:
             log_file.write(log_statement)
   

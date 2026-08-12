@@ -3,10 +3,11 @@ from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.logging import print_log,start_new_log
 from deblend_sofia_detections.support.system_functions import join_path,create_directory
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf,MISSING
 
 import os
 import psutil
+import shutil
 import sys
 import copy
 import deblend_sofia_detections
@@ -18,7 +19,7 @@ except ImportError:
     from importlib_resources import files as import_pack_files
     
 
-def setup_config(argv):
+def setup_config(argv,single_cube=False):
     if '-v' in argv or '--version' in argv:
         print(f"This is version {deblend_sofia_detections.__version__} of the program.")
         sys.exit()
@@ -42,7 +43,7 @@ create_package_name def_file=cube.fits error_generator=tirshaker
     if cfg_input.print_examples:
         default_name = f'{__name__.split(".")[0]}_default.yml' 
         masked_copy = OmegaConf.masked_copy(cfg,\
-                    ['input','general','directories'])
+                    ['input','sofia','logging','general','directories'])
            
         with open(default_name,'w') as default_write:
             default_write.write(OmegaConf.to_yaml(masked_copy))
@@ -74,14 +75,70 @@ configuration_file = ''')
     cfg = OmegaConf.merge(cfg,inputconf) 
   
     #open the input parameter file to obtain the data cube and output locations
-    cfg = read_parameter_input(cfg)
-    cfg = directory_check(cfg)  
+    if single_cube:
+        cfg = check_single_cube_input(cfg)
+    else:
+        cfg = read_parameter_input(cfg)
+    cfg = directory_check(cfg)
     if cfg.directories.run_directory != os.getcwd():
         os.chdir(cfg.directories.run_directory)
     cfg = background_check(cfg)
+    cfg = check_debug_functions(cfg)
    
     return cfg
 
+def check_debug_functions(cfg):
+    cfg.logging.debug_functions = [x.upper() for x in list(cfg.logging.debug_functions)]
+    if 'ALL' in cfg.logging.debug_functions:
+        cfg.logging.debug_functions = ['ALL']
+    if 'NONE' in cfg.logging.debug_functions:
+        cfg.logging.debug_functions = ['NONE']
+
+   
+    return cfg
+
+def check_single_cube_input(cfg):
+    # If we have a parameter file we read it normally but in this it is not required 
+    if os.path.isfile(cfg.input.sofia_parameters):
+        cfg = read_parameter_input(cfg)
+    else:
+        if not cfg.sofia.original_data_cube:
+            raise InputError(f'''You have not provided a data cube to process.''')
+        if os.path.split(cfg.sofia.original_data_cube)[0] == '':
+            if cfg.directories.data_directory == '':
+                cfg.directories.data_directory = os.getcwd()
+        else:
+            if cfg.directories.data_directory == '':
+                cfg.directories.data_directory = os.path.split(cfg.sofia.original_data_cube)[0]
+          
+            cfg.sofia.original_data_cube = os.path.split(cfg.sofia.original_data_cube)[1]  
+        # check that the cube exists
+        if not os.path.isfile(join_path(cfg.directories.data_directory,cfg.sofia.original_data_cube)):
+            raise InputError(f'''The data cube {cfg.sofia.original_data_cube} does not exist in the directory {cfg.directories.data_directory}. Please provide a correct data cube and directory.''')   
+        print()
+        if cfg.sofia.basename == '':
+            cfg.sofia.basename = os.path.splitext(cfg.sofia.original_data_cube)[0].split('_cube')[0]
+        # in this case the dta_directory and the sofia_directory have to be hthe same
+        if cfg.sofia.directory == '':
+            cfg.sofia.directory = cfg.directories.data_directory
+        cube_ext= os.path.splitext(cfg.sofia.original_data_cube)[1]
+        if cube_ext.lower() in ['.gz']:
+            cube_ext = os.path.splitext(os.path.splitext(cfg.sofia.original_data_cube)[0])[1]+cube_ext
+
+        cfg.internal.cube_ext = cube_ext
+        if cfg.sofia.original_mask == '':
+            cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask{cube_ext}'
+        if not os.path.isfile(join_path(cfg.sofia.directory,cfg.sofia.original_mask)):
+            raise InputError(f'''The mask file {cfg.sofia.original_mask} does not exist in the directory {cfg.sofia.directory}. Please provide a correct mask file.''')
+    # As we have no way to reproduce the mask in this case we do not want to modify it.
+    file,ext = os.path.splitext(cfg.sofia.original_mask)
+    if ext.lower() in ['.gz']:
+        file,ext2 = os.path.splitext(file)
+        ext = ext2 + ext
+    use_mask = f'{file}_deblended{ext}'
+    shutil.copyfile(join_path(cfg.sofia.directory,cfg.sofia.original_mask),join_path(cfg.sofia.directory,use_mask))
+    cfg.sofia.original_mask = use_mask
+    return cfg
 
 def directory_check(cfg):
     dirs = ['data_directory', 'run_directory', 'ancillary_directory', 'watershed_directory']

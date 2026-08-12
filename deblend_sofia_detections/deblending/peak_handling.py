@@ -97,7 +97,7 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
     local_maxima_coords = sorted(local_maxima_coords, key=lambda x: x[3], reverse=True)
     peak_table = filter_peaks(cfg, local_maxima_coords, previous_deblend=previous_deblend
         ,npeaks=npeaks)
-    if cfg.logging.debug:
+    if 'FIND_PEAKS' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
         #write the peak table to debug directory
         peak_table.write(f'{cfg.logging.log_directory}/peak_table.ecsv', overwrite=True)
 
@@ -120,9 +120,10 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
         # (manual markers here ...)
    
     print_log(cfg,f"Saving peak markers to {cfg.logging.log_directory}/peak3d_markers.fits",case=['debug'])
-    if cfg.logging.debug:    
-        fits.writeto(f"{cfg.logging.log_directory}/peak3d_markers.fits",markers3d,
+    if 'FIND_PEAKS' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:    
+        fits.writeto(f"{cfg.logging.log_directory}/peak3d_markers_{cfg.internal.image_counter}.fits",markers3d,
             header=cube_header, overwrite=True)
+        cfg.internal.image_counter += 1
 
     return peak_table,markers3d
       
