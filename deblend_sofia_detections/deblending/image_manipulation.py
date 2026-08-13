@@ -374,14 +374,14 @@ def split_sources(cfg_in,cube_name, mask,
         #read the ouput table
         print_log(cfg,f"Reading the SoFiA output table from {outdir} the cube {name}",
             case=['verbose'])
-        split_sources,table_name =  read_sofia_table(cfg, 
+        sources_to_split,table_name =  read_sofia_table(cfg, 
             sofia_directory=f'{outdir}/Sofia_Output/',sofia_basename=basename,
             no_conversion=False) 
-        print_log(cfg,f"Read the SoFiA output table from {outdir} the cube {name} with {len(split_sources)} sources.",
+        print_log(cfg,f"Read the SoFiA output table from {outdir} the cube {name} with {len(sources_to_split)} sources.",
             case=['verbose','screen'])
-        if split_sources is None:
+        if sources_to_split is None:
             raise ValueError(f"SoFiA did not produce an output table for {cube_name}. Please check the SoFiA output for errors.")
-        if len(split_sources) == 1:
+        if len(sources_to_split) == 1:
             print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose','screen'])
             matched = True
             break
@@ -389,7 +389,7 @@ def split_sources(cfg_in,cube_name, mask,
         #Prepare counterpart search for each source
         id = []
         replace_id = []
-        #present_id = [int(x) for x in split_sources['id']]  
+        #present_id = [int(x) for x in sources_to_split['id']]  
         counterparts = {}  
         watername= os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
         shutil.copy2(f"{outdir}/Sofia_Output/{watername}_mask.fits",f"{outdir}/Sofia_Output/tmp_mask.fits")
@@ -397,7 +397,7 @@ def split_sources(cfg_in,cube_name, mask,
         source_dtypes = {}
 
         #loop over the source
-        for source in split_sources:
+        for source in sources_to_split:
             print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
                 ,case=['verbose','screen'])
             #First we check if we have previous iteration output
@@ -421,7 +421,7 @@ def split_sources(cfg_in,cube_name, mask,
                 source['Name'] =  source['sofia_name'][0]
            
             source,source_dtypes = check_columns_dtype(cfg,source,source_dtypes)
-         
+            
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
@@ -432,7 +432,7 @@ def split_sources(cfg_in,cube_name, mask,
                     ,case=['verbose','screen'])
 
             if source_row['Name'] == source_row['sofia_name']:
-                rep = closest_sofia_source(cfg,source_row['sofia_id'],split_sources,
+                rep = closest_sofia_source(cfg,source_row['sofia_id'],sources_to_split,
                     header_info = header_info)
                 replace_id.append([int(source_row['sofia_id']),int(rep)])
             else:
@@ -456,7 +456,7 @@ def split_sources(cfg_in,cube_name, mask,
         #Checkin what we have
         print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
             , case=['verbose','screen'])            
-        if len(id) == len(split_sources):
+        if len(id) == len(sources_to_split):
             print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose', 'screen'])
             matched = True
         elif np.unique(maskin[0].data).size-1 == 1:
@@ -479,7 +479,7 @@ the counterparts map {counterparts}''', case=['verbose','screen'])
         ret_val= False
     else:
         ret_val = True
-    close_variables(maskin,split_sources)
+    close_variables(maskin,sources_to_split)
     return ret_val, match_table
 
 

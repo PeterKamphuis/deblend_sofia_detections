@@ -248,7 +248,7 @@ def get_nan_for_dtype(dtype):
 def get_ned_requested_metadata(include_extra=False):
     requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
         'Magnitude and Filter', 'Distance']
-    requested_dtypes = ['U30', float, float, float, object, object, float]
+    requested_dtypes = ['U30', float, float, float, 'U5', 'U5', float]
     requested_units = [None, u.deg, u.deg, u.km/u.s, None, None, u.Mpc]
 
     if include_extra:
