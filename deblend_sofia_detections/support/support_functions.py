@@ -1,16 +1,9 @@
-PROFILING = False  # set to True to enable memory profiling
-if PROFILING:
-    from memory_profiler import profile
-else:
-    def profile(stream=None):
-        def decorator(func):
-            return func
-        return decorator
+from deblend_sofia_detections.support.profiling import profile
 
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
-
-
+from deblend_sofia_detections.support.logging import print_log
+from deblend_sofia_detections.support.constants import C, rest_HI
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
@@ -32,13 +25,31 @@ def calculate_projected_distance(coord1,coord2,no_PA=False):
     if no_PA:
         return separation
    
-    projected_PA=(np.degrees(np.arcsin(np.radians(((coord1[1].to(u.deg)-coord2[1].to(u.deg))\
+    projected_PA=((np.degrees(np.arcsin(((coord1[1][:].to(u.deg)-coord2[1].to(u.deg))\
+                                    /separation.to(u.deg)).value)))+90.)*u.deg
+    
+   
+    diff=coord1[0][:]-coord2[0]
+    projected_PA[diff > 0] = 360.*u.deg - projected_PA[diff > 0]
+   
+    return separation,projected_PA.to(u.deg)
+
+
+def calculate_projected_distance_old(coord1,coord2,no_PA=False): 
+    '''Calculate the projected distance between two coordinates'''
+    sk1 = SkyCoord(*coord1)
+    sk2 = SkyCoord(*coord2)
+    separation = sk1.separation(sk2).degree*u.deg
+    if no_PA:
+        return separation
+   
+    projected_PA=((np.degrees(np.arcsin(((coord1[1].to(u.deg)-coord2[1].to(u.deg))\
                                     /separation.to(u.deg)).value)))+90.)*u.deg
     
     if coord1[0]-coord2[0] > 0.:
         projected_PA=360.*u.deg-projected_PA
   
-    return separation,projected_PA.to(u.deg)
+    return (separation,projected_PA.to(u.deg))
 
 def close_variables(*args):
     for var in args:
@@ -61,10 +72,10 @@ def convert_pix_columns_to_arcsec(cfg,table,file):
     hdr  = fits.getheader(file)
     pixsize= np.mean([abs(hdr['CDELT1']),abs(hdr['CDELT2'])]*u.deg/u.pix)
     for col in table.colnames:
-        if table[col].unit == u.pix and not col[0] in ['x','y','z'] and \
-            not col[-1] in ['x','y','z'] :
-            table[col] = (table[col]*pixsize).to(u.deg)
-           
+        if table[col].unit == u.pix and not col[0] in ['x','y','z'] and not\
+            col[-1] in ['x','y','z'] and not 'w50' in col.lower() and not\
+            'w20' in col.lower():
+                table[col] = (table[col]*pixsize).to(u.deg)         
     return table
 
 def convert_pixel_values_to_original(intable, cube_file_name,original_cube):
@@ -85,12 +96,12 @@ def convert_pixel_values_to_original(intable, cube_file_name,original_cube):
             intable[f'z{conv_set}'][r] = new_values[2]*u.pix
     return intable
 
-def convertRADEC(RAin,DECin,invert=False, colon=False, verbose=False):
+def convertRADEC(cfg,RAin,DECin,invert=False, colon=False, verbose=False):
     if verbose:
-        print(f'''CONVERTRADEC: Starting conversion from the following input.
+        print_log(cfg,f'''CONVERTRADEC: Starting conversion from the following input.
 {'':8s}RA = {RAin}
 {'':8s}DEC = {DECin}
-''')
+''',case=['verbose'])
     RA = copy.deepcopy(RAin)
     DEC = copy.deepcopy(DECin)
     if not invert:
@@ -183,6 +194,36 @@ convertRADEC.__doc__ =f'''
  NOTE:
 '''
 
+def get_channel_width(hdr,velocity=False):
+    chwidth = hdr['CDELT3']
+    if 'CUNIT3' in hdr:
+        if hdr['CUNIT3'].lower() == 'm/s':
+            chwidth *= u.m/u.s
+        elif hdr['CUNIT3'].lower() == 'km/s':
+            chwidth *= u.km/u.s
+        elif hdr['CUNIT3'].lower() == 'hz':
+            chwidth *= u.Hz
+        elif hdr['CUNIT3'].lower() == 'khz':
+            chwidth *= u.kHz
+        else:
+            raise InputError(f'Your cube has a CUNIT3 of {hdr["CUNIT3"]} which is not recognized. Please make sure it is in m/s, km/s, Hz or kHz')
+    else:
+        if chwidth < 500.:
+            chwidth *= u.km/u.s
+            
+            print(f'Your cube does not have a CUNIT3 keyword, but the channel width is {chwidth}. We will assume it is in km/s')
+        else:
+            chwidth *= u.m/u.s
+            print(f'Your cube does not have a CUNIT3 keyword, but the channel width is {chwidth}. We will assume it is in m/s')
+    if velocity:
+        if chwidth.unit.is_equivalent(u.Hz):
+            chwidth = (-C.to(u.km/u.s) * chwidth.to(u.Hz) / rest_HI.to(u.Hz)).decompose().to(u.km/u.s)
+        if chwidth.unit.is_equivalent(u.km/u.s):
+            pass
+        else:
+            raise UnitError(f'Your cube has a CUNIT3 of {hdr["CUNIT3"]} which is not recognized as a velocity unit. Please make sure it is in m/s, km/s, Hz or kHz')
+    return chwidth
+
 def get_nan_for_dtype(dtype):
     """Return appropriate NaN value for given dtype"""
     dtype = np.dtype(dtype)
@@ -203,6 +244,20 @@ def get_nan_for_dtype(dtype):
         return np.timedelta64('NaT')
     else:
         return None
+
+def get_ned_requested_metadata(include_extra=False):
+    requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
+        'Magnitude and Filter', 'Distance']
+    requested_dtypes = ['U30', float, float, float, 'U5', 'U5', float]
+    requested_units = [None, u.deg, u.deg, u.km/u.s, None, None, u.Mpc]
+
+    if include_extra:
+        requested_columns += ['Spatial Diff', 'Velocity Diff', 'Combined Diff']
+        requested_dtypes += [float, float, float]
+        requested_units += [u.deg, u.km/u.s, u.dimensionless_unscaled]
+
+    return requested_columns, requested_dtypes, requested_units
+
 
 def get_source_cat_name(line,input_columns,column_locations):
     '''Read out the source name from the catalogue input line'''
@@ -286,8 +341,8 @@ def isquantity(value):
             verdict = False
        
     return verdict
-fn = open('profiler_logs/match_size.log', 'w+') if PROFILING else None
-@profile(stream=fn)
+
+@profile('profiler_logs/match_size.log')
 def match_size(matcharray, inarray,max=False):
     """
     Match the size of inarray to matcharray by regridding.
@@ -336,7 +391,6 @@ def read_unit_part(input_string,transform_in):
     proc_unit = tmp[0].strip()
     #if we still have a trans form we pass
     if len(proc_unit.split('/')) > 1 or len(proc_unit.split('*')) > 1:
-        #print(f'WARNING: The unit {proc_unit} contains a transformation {transform_in} that is not supported. Skipping this part.')
         proc_unit = None
         remainder = transform_in
         pass

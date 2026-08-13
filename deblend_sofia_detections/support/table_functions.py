@@ -1,7 +1,9 @@
+
+
 from deblend_sofia_detections.support.errors import TableError,InputError
 from deblend_sofia_detections.support.support_functions import\
     is_real_unit, isquantity, translate_string_to_unit, convertRADEC
-
+from deblend_sofia_detections.support.logging import print_log
 from astropy import units as u
 from astropy.table import QTable,Table,Row
 
@@ -9,12 +11,78 @@ import copy
 import os
 import pickle
 import numpy as np
+import warnings
+
+
+
+
+def check_columns_dtype(cfg,table,dtypes_in):
+   
+    """Inspect or enforce column dtypes for an astropy table.
+
+    Parameters
+    ----------
+    table : astropy.table.Table or astropy.table.QTable
+        Input table to inspect or update.
+    dtypes : list
+        If empty, return current column dtypes.
+        If non-empty, cast each column to the corresponding dtype.
+
+    Returns
+    -------
+    list or astropy.table.Table
+        Returns list of current dtypes when ``dtypes`` is empty.
+        Returns the updated table when ``dtypes`` is provided.
+    """
+    dtypes = copy.deepcopy(dtypes_in)
+    if dtypes is None:
+        dtypes = {}
+
+    if len(dtypes) == 0:
+        for col, dtype in zip(table.colnames, [table[col].dtype for col in table.colnames]):
+            dtypes[col] = table[col].dtype
+        return table,dtypes
+
+    if len([x for x in dtypes]) != len(table.colnames):
+        print_log(cfg,
+            f"The provided dtypes list does not match the number of table columns",
+            case=["main"])
+
+        raise InputError(
+            "The provided dtypes list does not match the number of "
+            f"table columns ({len(dtypes)} != {len(table.colnames)})."
+        )
+
+    for col in table.colnames:
+        try:
+            target_dtype = np.dtype(dtypes[col])
+            current_dtype = np.dtype(table[col].dtype)
+
+            if target_dtype.kind == 'U' and current_dtype.kind == 'U':
+                current_chars = current_dtype.itemsize // np.dtype('U1').itemsize
+                target_chars = target_dtype.itemsize // np.dtype('U1').itemsize
+                if target_chars < current_chars:
+                    target_dtype = current_dtype
+            table[col] = table[col].astype(target_dtype)
+        except Exception as e:
+            print_log(cfg,
+                f"Failed to cast column '{col}' to dtype '{dtypes[col]}': {e}",
+                case=["main"])
+            
+            raise InputError(
+                f"Failed to cast column '{col}' to dtype '{dtypes[col]}': {e}"
+            )
+
+    return table,dtypes
 
 def check_table_length(table):
     " Check the length of an astropy table or row"
-    if isinstance(table,(Table)):
+    if isinstance(table,(QTable)):
         length= len(table)
-    elif isinstance(table,(QTable)):
+        if 'Object Name' in table.colnames and length == 1:
+            if table['Object Name'][0] == 'No object Found':
+                length = 0
+    elif isinstance(table,(Table)):
         length= len(table)
     elif isinstance(table,(Row)):
         length = 1
@@ -113,12 +181,17 @@ def combine_tables(tableone, tabletwo, column_indicators=[None,None]):
                 inputrows[j] += newrow
     
     # Create the combined table
+   
     combined_table = QTable(names=input_columns, units=convert_units, dtype=dtypes)
-    
+   
     # Add rows to the combined table
-    for row in inputrows:
-        combined_table.add_row(row)
-    
+   
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for row in inputrows:
+            combined_table.add_row(row)
+  
+   
     return combined_table
 
 def copy_table_header(input_table):
@@ -134,8 +207,42 @@ def copy_table_header(input_table):
    
     return copied_table
 
+def identify_object_names(cfg,table):
+    """
+    Identify the object name column in a table based on common keywords.
+    
+    Parameters:
+    - table: Astropy Table containing the data.
+    
+    Returns:
+    - Updated table with the identified object name column.
+    """
+    clear_name_columns = ['name', 'galaxy', 'object', 'NGC', 'IC', 'UGC',
+                           'PGC', 'ESO', '2MASX', 'SDSS', 'WISEA']
+    check_name_columns = ['id', 'identifier']
+    found = False
+    for col in table.colnames:
+        if col.lower() in clear_name_columns:
+            table['Object Name'] = table[col].copy()
+            found = True
+            break 
+    if not found:
+        for col in table.colnames:
+            if col.lower() in check_name_columns:
+                if isinstance(table[col][0], str):
+                    try:
+                        tmp =float(table[col][0])
+                    except ValueError:               
+                        table['Object Name'] = table[col].copy()
+                        found = True
+                        break    
+       
+    if found:   
+        return table
+    else:
+        raise TableError('No object name column found in the table.')
 
-def identify_velocity_column(table):
+def identify_velocity_column(cfg,table):
     """
     Identify the velocity column in a table based on common keywords.
     
@@ -145,6 +252,7 @@ def identify_velocity_column(table):
     Returns:
     - Updated table with the identified velocity column.
     """
+  
     possible_velocity_columns = ['v_rad', 'v_sofia','cz','v_opt'
         ,'vel','vsys','v_sys','v_hel','v_optical', 'v_helio', 'v_lsr']
     found = False
@@ -157,7 +265,7 @@ def identify_velocity_column(table):
                     found = True
                     break
                 except Exception as e:
-                    print(f"Error converting {col} to km/s: {e}")
+                    print_log(cfg, f"Error converting {col} to km/s: {e}", case=['verbose'])
                     pass
             else:
                 table['Velocity'] = table[col].copy()
@@ -166,7 +274,8 @@ def identify_velocity_column(table):
     if found:   
         return table
     else:
-        raise TableError('No velocity column found in the table.')
+        raise TableError(f'''No velocity column found in the table.
+These are the available columns {table.colnames} and their units {[table[col].unit for col in table.colnames]}''')
     
 
 def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
@@ -186,11 +295,11 @@ def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
         with open(table_in,'rb') as tmp:
             table = pickle.load(tmp)
     elif ext == '.txt':
-        table = read_text_table(table_in)
+        table = read_text_table(cfg,table_in)
         with open(pickle_file,'wb') as tmp:
             pickle.dump(table,tmp)
     elif ext == '.csv':
-        table = read_text_table(table_in,seperator=',')
+        table = read_text_table(cfg,table_in,seperator=',')
         with open(pickle_file,'wb') as tmp:
             pickle.dump(table,tmp)
     else:
@@ -205,9 +314,9 @@ def read_manual_table(cfg, need_velocity =True):
             continue
         if not os.path.isfile(table_in):
             raise InputError(f'Could not find manual input table {table_in}')
-        if cfg.general.verbose:     
-            print(f'Loading manual input table {table_in}')
-            manual_table_small = load_table(table_in, cfg=cfg)
+          
+        print_log(cfg,f'Loading manual input table {table_in}',case=['verbose'])
+        manual_table_small = load_table(table_in, cfg=cfg)
 
         if manual_table is None:
             manual_table = manual_table_small
@@ -216,11 +325,13 @@ def read_manual_table(cfg, need_velocity =True):
     
     if 'velocity' not in [x.lower() for x in manual_table.colnames]\
         and need_velocity:
-        manual_table = identify_velocity_column(manual_table) 
+        manual_table = identify_velocity_column(cfg,manual_table) 
+    if 'object name' not in [x.lower() for x in manual_table.colnames]:
+        manual_table= identify_object_names(cfg,manual_table)
     return manual_table
 
 
-def read_text_table(file,seperator=' '):
+def read_text_table(cfg,file,seperator=' '):
     sources = None
     with open(file) as tmp:
         lines =tmp.readlines()
@@ -324,12 +435,12 @@ def read_text_table(file,seperator=' '):
                         sources[input_columns[i]] = Column(tmp_column.value,\
                                 unit=u.deg)
                     if convert_units[i] == 'hms':
-                        deg,dummy = convertRADEC(value,'0d0m0s',invert=True)
+                        deg,dummy = convertRADEC(cfg,value,'0d0m0s',invert=True)
                         construct_row.append(deg*u.deg)
                         
                     else:
                       
-                        dummy,deg = convertRADEC('0h0m0s',value,invert=True)
+                        dummy,deg = convertRADEC(cfg,'0h0m0s',value,invert=True)
                         construct_row.append(deg*u.deg)
                 else:
                     if dtypes[i] == bool:
@@ -350,7 +461,9 @@ def read_text_table(file,seperator=' '):
                         try:
                             construct_row.append(float(value)*convert_units[i])
                         except ValueError:
-                            print(f"Value '{value}' could not be converted to float with unit {convert_units[i]}. Setting to NaN.")
+                            print_log(cfg,
+                                f"Value '{value}' could not be converted to float with unit {convert_units[i]}. Setting to NaN.",
+                                case = ['debug'])
                             construct_row.append(np.nan * convert_units[i])
             sources.add_row(construct_row)
     print(f"\n")

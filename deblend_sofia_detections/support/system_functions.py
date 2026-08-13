@@ -1,4 +1,4 @@
-
+# Do not import logging here as it uses create directory
 
 from deblend_sofia_detections.support.errors import InputError
 
@@ -8,9 +8,14 @@ import time
 def create_directory(directory,base_directory=None):
     split_directory = [x for x in directory.split('/') if x]
     split_directory_clean = [x for x in directory.split('/') if x]
+  
     if base_directory is None:
+        if directory[0] == '/':
+            base_directory = f'/{split_directory[0]}'
         #If we do not provide a base directory the directory has to under the current working tree
-        base_directory = os.getcwd()
+        else:
+            base_directory = os.getcwd()
+    
     split_base = [x for x in base_directory.split('/') if x]
     #First remove the base from the directory but only if the first directories are the same
     if split_directory[0] == split_base[0]:
@@ -66,4 +71,9 @@ def join_path(*args):
     if len(args[-1]) > 0 :
         if args[-1][-1] == '/':
             ini = ini+'/'
+    try:
+        os.path.splitext(args[-1])[1]
+    except IndexError:
+        ini = ini + '/'
+    
     return ini

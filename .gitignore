@@ -234,3 +234,5 @@ __pycache__
 .virtualenv*/
 #workspace
 Sample_Run_Sofia.code-workspace
+deblend_sofia_detections.code-workspace
+*.code-workspace

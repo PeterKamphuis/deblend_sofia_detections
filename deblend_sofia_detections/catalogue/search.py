@@ -1,172 +1,93 @@
+
+
 from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
-    isquantity, get_nan_for_dtype,calculate_projected_distance
+    isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
+    get_channel_width,get_ned_requested_metadata
+from deblend_sofia_detections.support.logging import print_log
+from deblend_sofia_detections.support.constants import C,rest_HI
 
-from astropy.coordinates import SkyCoord
 from astropy.io import fits
-from astropy.table import QTable, Column,Table
-
-from astroquery.ipac.ned import Ned
-from xml.parsers.expat import ExpatError
-
+from astropy.table import QTable,Table,vstack
+from datetime import datetime
 import astropy.units as u
 import copy
 import numpy as np
-import time
+import warnings
 
-Ned.TIMEOUT = 3600
+import pickle
 
-
-def get_ned_requested_metadata(include_extra=False):
-    requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
-        'Magnitude and Filter', 'Distance']
-    requested_dtypes = ['U30', float, float, float, object, object, float]
-    requested_units = [None, u.deg, u.deg, u.km/u.s, None, None, u.Mpc]
-
-    if include_extra:
-        requested_columns += ['Spatial Diff', 'Velocity Diff', 'Combined Diff']
-        requested_dtypes += [float, float, float]
-        requested_units += [u.deg, u.km/u.s, u.dimensionless_unscaled]
-
-    return requested_columns, requested_dtypes, requested_units
-
-
-def make_empty_ned_search_table():
-    requested_columns, requested_dtypes, requested_units = \
-        get_ned_requested_metadata(include_extra=True)
-
-    table = QTable(names=requested_columns, dtype=requested_dtypes,
-        units=requested_units)
-    table.add_row(['No object Found', np.nan, np.nan, np.nan,
-        'Unknown', None, np.nan, np.nan, np.nan, np.nan])
-    return table
-
-
-def find_NED_counterpart(cfg,source,header_info, sysrange = None,\
-        weights = [1.,1.,1.],wide_search = False ):
-    requested_columns, dummy_dtypes, dummy_units = get_ned_requested_metadata()
-    coordinates = [source['ra'].unmasked,source['dec'].unmasked]
-    #coordinates, radius
-    #[source['ra'],source['dec'],source['v_sofia']],\
-    #            beam_size[0]/2.
+def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
+                     spectroscopic=True):
     
-    co = SkyCoord(ra=coordinates[0], dec=coordinates[1], frame='fk5')
-
-    # Setup a search table in ned
-    vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region,wide_search=wide_search)
-    if cfg.general.verbose:
-        print("Querying NED")
-        print(f'Search a radius {radius.to(u.arcmin)} around {", ".join(convertRADEC(*[x.value for x in coordinates[:2]]))}')
-    # get the NED table
-    internet_table = None
-    query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
-    for attempt in range(3):
-        try:
-            internet_table = Ned.query_region(co, radius=radius, equinox='J2000.0')
-            break
-        except query_errors as e:
-            if cfg.general.verbose:
-                print(f'NED query failed on attempt {attempt + 1}/3: {e}')
-            if attempt < 2:
-                time.sleep(5 * (attempt + 1))
-
-    if internet_table is None:
-        if cfg.general.verbose:
-            print('NED returned an invalid or temporary response; continuing without a NED counterpart.')
-        return make_empty_ned_search_table()
-    
-    # as astropy is the dumbest project ever they can not be consistant so 
-    # we have to correct the units for RA and DEg
-    internet_table['RA'].unit=u.deg
-    internet_table['DEC'].unit=u.deg
-    # Astropy is so stupid that it does not provide a QTable from the query
-    # so we have to do this as well. 
-    result_table = QTable()
-    
-    for x in requested_columns:
-        if x in internet_table.colnames:
-            tmp_column= internet_table[x]
-            tmp_column[tmp_column.mask] = float('NaN')
-           
-            result_table[x] = Column(tmp_column,\
-                                unit=internet_table[x].unit)
-        else:
-            result_table[x] = Column([None for x in range(check_table_length(internet_table))])
-           
-  
-    #select out the galaxies
-    objects_to_select = ['G','GPAIR','GTRPL']
-    rows = [True if x.upper() in objects_to_select else False for x in result_table['Type']]
-    search_table = result_table[rows]
-   
-    # if we have set a range of velocities we mask all that that are outside the range
-    if not sysrange is None:
-        rows =  [True if vsys-sysrange < x < vsys+sysrange else False for x in search_table['Velocity']]
-        search_table = search_table[rows]
-    else:
-        # if we do not have a velocity range we have to make sure that we take the None as float
-        search_table['Velocity'] = [float('NaN') if x is None else x for x in search_table['Velocity']]
+    if table_source.upper() == 'NED':
+        if cfg.internal.ned_table == 'none':
+            print_log(cfg, f'No cached NED table found. Please run the download_catalogue function first.', case=['verbose'])
+            return QTable()
+        with open(f'{cfg.internal.ned_table}', 'rb') as tmp:
+            search_table = pickle.load(tmp)
+    elif table_source.upper() == 'SIMBAD':
+        if cfg.internal.simbad_table == 'none':
+            print_log(cfg, f'No cached SIMBAD table found. Please run the download_catalogue function first.', case=['verbose'])
+            return QTable()
+        with open(f'{cfg.internal.simbad_table}', 'rb') as tmp:
+            search_table = pickle.load(tmp)
+    elif table_source.upper() == 'MANUAL':
+        if cfg.input.manual_input_tables[0] is None:
+            return  QTable()
+        search_table = read_manual_table(cfg)
        
-    if check_table_length(search_table) > 0:
-        if not isquantity(search_table['Velocity']):
-            search_table['Velocity'].unit = u.km/u.s
-        else:
-            if search_table['Velocity'].unit != u.km/u.s:
-                try:
-                    search_table['Velocity'] = [x.to(u.km/u.s).value for x in search_table['Velocity']]
-                    search_table['Velocity'].unit = u.km/u.s
-                except:
-                    raise InputError(f'the NED counterpart for {source["Name"]} has a weird unit {search_table["Velocity"].unit}')
-   
-    # first sort on distance, we always do this cause else we do not get the Spatial and combined columns
-    search_table = sort_on_distance(search_table, coordinates,vsys)
-    if len(search_table) > 1:
-        # then pick NGC/UGC/ESO/M matches
-        search_table = sort_by_name(search_table)
-
-    if check_table_length(search_table) > 0:
-        name = search_table['Object Name'][0]
-        if ':' in name:
-            search_table['Object Name'][0] = name.split(':')[0]
-    if search_table['Velocity Diff'].unit != u.km/u.s:
-        print(f'Velocity Diff unit is {search_table["Velocity Diff"].unit}')
-   
-    return search_table
-
-
-def find_manual_counterpart(cfg,source,header_info, sysrange=None):
-    if cfg.input.manual_input_tables[0] is None:
-        return  QTable()
-    manual_table = read_manual_table(cfg)
-
-    coordinates = [source['sofia_ra'],source['sofia_dec']]
-    
+    else:
+        raise InputError(f'Unknown table source {table_source}. Please use NED, SIMBAD or MANUAL.')
+    prefix = ''
+    for col in source.colnames:
+        if col.split('_')[0] == 'sofia':
+            prefix = 'sofia_'
+            break
+            
+    coordinates = [source[f'{prefix}ra'],source[f'{prefix}dec']]
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.general.counterpart_region)
-  
-    search_table = sort_on_distance(manual_table, coordinates,vsys)
-    if cfg.general.verbose:
-        print(f'Searching for manual counterpart for {source["sofia_id"]}')
-        print(f'Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(coordinates[0].value,coordinates[1].value))}')
-        print(f' The nearest target is {search_table["Name"]} at a distance of {search_table["Spatial Diff"].to(u.arcsec)}')
-        print(f'And the velocity difference is {search_table["Velocity Diff"].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}')
+        counterpart_region=cfg.input.counterpart_region)
+    
+    search_table = sort_on_distance(cfg,search_table, coordinates,
+        vsys,header_info=header_info,spectroscopic=spectroscopic)
+    print_log(cfg,f'''Searching for {table_source} counterpart for {source[f'{prefix}id']}
+Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(cfg,coordinates[0].value,coordinates[1].value))}
+The nearest target is {search_table['Object Name'][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}
+And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}''',
+        case=['verbose','screen'])
+    #the closest 200 source should suffice
+    search_table = search_table[0:200]
+    #let's mask all that are outside the range if we have set a range of velocities
+ 
+    for s_diff,v_diff in zip(search_table['Spatial Diff'],search_table['Velocity Diff']):
+        if (np.isnan(v_diff)  or v_diff > sysrange) and spectroscopic:
+            search_table.remove_row(np.where(search_table['Spatial Diff'] == s_diff)[0][0]) 
+            continue
+        #If we want to change this we should change the radius
+        if s_diff > radius.to(u.arcsec):
+            search_table.remove_row(np.where(search_table['Spatial Diff'] == s_diff)[0][0]) 
    
-  
-    # if we have set a range of velocities we mask all that that are outside the range
-    if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
+    # if all are outside the range we return an empty table
+    if check_table_length(search_table) == 0: 
+       search_table = QTable()
+    elif np.isnan(search_table['Velocity Diff'][0]):
+        if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec):
+            search_table = QTable() 
+    elif search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
        search_table['Velocity Diff'][0] > sysrange:
        search_table = QTable()
    
     return search_table
-   
+
+
 
 
 
 def search_counter_part(cfg,source,sofia_directory= './',
-        basename=None,query ='NED',insource=None,wide_search=False):
+        basename=None,query ='INTERNET',insource=None):
     '''Look for the optical counterpart of the source'''
     if isinstance(source, (Table, QTable)):
         source = source[0]
@@ -174,67 +95,87 @@ def search_counter_part(cfg,source,sofia_directory= './',
         inid = source['id']
     except:
         inid = source['sofia_id']
-    if cfg.general.verbose:
-        print(f'Searching in {query} to find a counterpart for {basename} with id {inid}')
+    
+    print_log(cfg,f'Searching in {query} to find a counterpart for {basename} with id {inid}',
+        case=['verbose'])
    
     input_dir = f'{sofia_directory}/{basename}_cubelets'
     cube = fits.open(f'{input_dir}/{basename}_{inid}_cube.fits',\
         output_verify='warn')
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
-                  'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),\
-                                              abs(cube[0].header['CDELT1'])]))\
-                                              *u.deg\
-                                                 }
+                'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),
+                    abs(cube[0].header['CDELT2'])]))*u.deg,
+                'channel_width': get_channel_width(cube[0].header,velocity=True) 
+                }
    
     # first try a spectroscopic match
-    if query.upper() == 'NED':
+    if query.upper() in ['INTERNET','SIMBAD','NED']:
       
-        spectroscopic_table = find_NED_counterpart(cfg,source, header_info,\
-            sysrange=150.*u.km/u.s,wide_search=wide_search)
+        #spectroscopic_table = find_NED_counterpart(cfg,source, header_info,\
+        #    sysrange=150.*u.km/u.s,wide_search=wide_search)
         
-        search_id = 'NED'
+        #if ('Object Name' in spectroscopic_table.colnames and
+        #    spectroscopic_table['Object Name'][0] == 'No object Found'):
+            # something went wrong with the NED query, so lets try cDS
+        if query.upper() in ['INTERNET','NED']:
+            spectroscopic_table_ned = find_counterpart(cfg,source, header_info,
+                sysrange=150.*u.km/u.s, table_source='NED')  
+        if query.upper() in ['INTERNET','SIMBAD']:
+            spectroscopic_table_simbad = find_counterpart(cfg,source, header_info,
+                sysrange=150.*u.km/u.s, table_source='SIMBAD')
+        if check_table_length(spectroscopic_table_ned) > 0 and check_table_length(spectroscopic_table_simbad) > 0:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                spectroscopic_table = vstack([spectroscopic_table_ned, spectroscopic_table_simbad])
+            vsys, radius = set_search_radius(cfg,source,header_info,150.*u.km/u.s,
+                counterpart_region=cfg.input.counterpart_region)
+            coord = [source[f'ra'],source[f'dec']]
+            spectroscopic_table = sort_on_distance(cfg,spectroscopic_table, 
+                coord,vsys,header_info=header_info)
+        elif check_table_length(spectroscopic_table_ned) > 0:
+            spectroscopic_table = spectroscopic_table_ned
+        elif check_table_length(spectroscopic_table_simbad) > 0:
+            spectroscopic_table = spectroscopic_table_simbad
+        else:
+            spectroscopic_table = QTable()    
+
+
+        search_id = 'INTERNET'
         pref =''
     elif query.upper() == 'MANUAL':
-        spectroscopic_table = find_manual_counterpart(cfg,source, header_info,
-            sysrange=150.*u.km/u.s)  
+        spectroscopic_table = find_counterpart(cfg,source, header_info,
+            sysrange=150.*u.km/u.s,table_source='MANUAL',
+            spectroscopic=cfg.input.spectroscopic_manual_counterparts)
         search_id = 'Manual'
         pref = 'sofia_'
-    confirmed = True
+        
+  
    
-    if check_table_length(spectroscopic_table) > 0 and not (
-        'Object Name' in spectroscopic_table.colnames and
-        spectroscopic_table['Object Name'][0] == 'No object Found'):
-        new_table = spectroscopic_table
-    else:
-        if cfg.general.verbose:
-            print(f'We found no match within the velocity range, picking the closest object without velocity')
-        if query.upper() == 'NED':
-            possible_table = find_NED_counterpart(cfg,source, header_info)
-        if query.upper() == 'MANUAL':
-            possible_table = QTable()
-        new_table = possible_table
-        confirmed = False
-    #We don't need the searching rows
-    #false_table = True
-    #if query.upper() == 'NED':
-    #    false_table = False
-    if check_table_length(new_table) > 0 and not (
-        query.upper() == 'NED' and 'Object Name' in new_table.colnames and
-        new_table['Object Name'][0] == 'No object Found'):
-        new_table=new_table[0:1]
+    if check_table_length(spectroscopic_table) > 0:
+        new_table = spectroscopic_table[0:1]
         final_row = combine_tables(new_table,source,column_indicators=[search_id,insource])
-        final_row[f'{search_id}_spectroscopic'] = confirmed
+        if np.isnan(new_table['Velocity Diff'][0]):
+            final_row[f'{search_id}_spectroscopic'] = False
+        else:
+            final_row[f'{search_id}_spectroscopic'] = True
+           
     else:
-        if cfg.general.verbose:
-            print(f'We found no {search_id} counterpart for {source[pref+"id"]}')
-        if query.upper() == 'NED':
-            requested_columns, requested_dtypes, requested_units = \
+        #Producing a same size empty table
+        print_log(cfg,f'We found no {search_id} counterpart for {source[pref+"id"]}', 
+            case=['verbose'])
+        #if query.upper() == 'INTERNET':
+        requested_columns, requested_dtypes, requested_units = \
                 get_ned_requested_metadata(include_extra=True)
-        elif query.upper() == 'MANUAL':
-            manual_table = read_manual_table(cfg,need_velocity=False)
+        
+        if query.upper() == 'MANUAL':
+            if cfg.input.manual_input_tables[0] is None:
+                manual_table = QTable(names=['Object Name'],dtype=['str'])
+            else:
+                manual_table = read_manual_table(cfg,need_velocity=True)
+           
             # Add the difference columns 
-            add_units = [u.km/u.s,u.deg, u.km/u.s, u.dimensionless_unscaled]
-            for i,col in enumerate(['Velocity','Spatial Diff','Velocity Diff','Combined Diff']):
+            add_units = [u.deg, u.km/u.s, u.dimensionless_unscaled]
+            for i,col in enumerate(['Spatial Diff','Velocity Diff','Combined Diff']):
                 if col not in manual_table.colnames:
                     manual_table.add_column(np.nan,name=col)
                     manual_table[col].unit = add_units[i]
@@ -245,6 +186,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 requested_columns.append(col)
                 requested_dtypes.append(manual_table[col].dtype)
                 requested_units.append(manual_table[col].unit)
+    
         requested_values = []
         for dt in requested_dtypes:
             requested_values.append(get_nan_for_dtype(dt))    
@@ -253,10 +195,13 @@ def search_counter_part(cfg,source,sofia_directory= './',
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = False
+    
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')
+    close_variables(spectroscopic_table)
     return final_row
+
 
 
 def set_search_radius(cfg,source,header_info,sysrange=None,
@@ -292,8 +237,8 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
                          ])*header_info['pixelsize'],float(radius.value)])*u.deg
     elif counterpart_region.lower() in ['ellipse']:
         if f'{pref}ell_maj' in source.colnames:
-            print(f'This is the values from sofia')
-            print(source[f'{pref}ell_maj'].to(u.deg).value,radius.to(u.deg).value)
+            print_log(cfg,f'''This is the values from sofia
+ell_maj = {source[f'{pref}ell_maj'].to(u.deg).value}, radius = {radius.to(u.deg).value}''',case=['debug'])
             radius = np.nanmax([float(source[f'{pref}ell_maj'].to(u.deg).value*0.1),
                                 float(radius.to(u.deg).value)])*u.deg
             
@@ -308,8 +253,8 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
         radius *= 5.
     if f'{pref}ell_maj' in source.colnames:
         if radius > source[f'{pref}ell_maj'].to(u.deg):
-            if cfg.general.verbose:
-                print(f'Reducing the search radius to the ellipse major axis {source[f"{pref}ell_maj"]}')
+            print_log(cfg,f'Reducing the search radius to the ellipse major axis {source[f"{pref}ell_maj"]}',
+                case=['verbose'])
             radius = float(source[f'{pref}ell_maj'].to(u.deg).value)*u.deg
     
     return vsys, radius
@@ -318,8 +263,7 @@ def set_search_radius(cfg,source,header_info,sysrange=None,
 
 ''' Sort our table based on catalogue name'''
 def sort_by_name(table):
-    #print(table)
-    # The order we prefer things in 
+   # The order we prefer things in 
     preferred_order = [['NGC'], ['UGC','ESO'], ['M']]
     new_table = copy_table_header(  table,)
    
@@ -342,40 +286,70 @@ def sort_by_name(table):
     return new_table            
 
 '''Sort the table by distance'''
-def sort_on_distance(table_in,coordinates,vsys,weights = [1.,1.],print_in=False):
-    # this stupid table is not ordered so get names, types ra and dec and sort on distance
+def sort_on_distance(cfg, table_in, coordinates, vsys, 
+        header_info = None, weights = [1.,1.],spectroscopic=True):
+    # this stupid table is not ordered so get names, types ra and dec 
+    # and sort on distance
+    if vsys is None and spectroscopic:
+        print_log(cfg,
+            f'No systemic velocity found for {table_in["Object Name"][0]}. This is a logical error',
+            case=['main'])
+        raise InputError(f'No systemic velocity found for {table_in["Object Name"][0]}. This is a logical error')
+
+
+    only_sort =False
     for x in table_in.colnames:
-        if x.lower() in ['spatial_diff','velocity_diff', 'combined_diff']:
-            raise InputError(f'Column {x} is not allowed in the table, please rename it')     
-    if print_in:
-        print(f'Before sorting: {table_in}')    
-        print(f'This the table type {type(table_in)}')
-    table = copy.deepcopy(table_in)
-    table['Spatial Diff'] = [calculate_projected_distance([x,\
-        y],coordinates,no_PA = True).value for x,y in zip(\
-        table['RA'],table['DEC'])]* u.deg
-    if not vsys is None:
-        velocities = table['Velocity'].to(u.km/u.s)
-        if isquantity(velocities):
-            velocities = velocities.value
-        if isquantity(vsys):
-            vsys = vsys.to(u.km/u.s).value
-        table['Velocity Diff'] = [float(abs(vsys-z)/weights[1])\
-            for z in velocities] * u.km/u.s
-        table['Combined Diff']= [float(np.sqrt(x.value**2+y.to(u.arcsec).value**2)) for x,y in\
-            zip(table['Velocity Diff'],table['Spatial Diff'])] * u.dimensionless_unscaled
-             
-        table.sort('Combined Diff')
+        if x in ['Spatial Diff']:
+            if vsys is None:
+                only_sort = True
+        elif x in ['Combined Diff']:
+            if vsys is not None and not np.isnan(table_in[x][0]):
+                only_sort = True
        
-    else:
-      
-        table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-            * u.km/u.s
-        table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-            * u.dimensionless_unscaled
+    table = copy.deepcopy(table_in)
+    if not only_sort:
+        print_log(cfg,f'Before sorting: {table_in[0]}',case=['verbose'])
+        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])      
+        if np.all(np.array(weights) == 1.) and not header_info is None:
+            weights = [header_info['pixelsize'], 
+                       header_info['channel_width']]
+            
+        print_log(cfg,f'Using weights {weights}',case=['debug'])
+        if spectroscopic:
+            #throw all entries that have velocity nan out of the table, as we cannot use them for the distance calculation
+            table = table[~np.isnan(table['Velocity'])]
+        # Do not apply the weights to the spatial distance or velocity differences 
+        # as they are used a actual physical thresholds 
+       
+        table['Spatial Diff'] = calculate_projected_distance([table['RA'],table['DEC']],
+            coordinates,no_PA = True)
+        
+   
+        if not vsys is None:
+            velocities = table['Velocity'].to(u.km/u.s)
+           
+            if not isquantity(vsys):
+                raise InputError(f'vsys is not a quantity but {type(vsys)}')
+            
+            vsys = vsys.to(u.km/u.s)
+           
+            table['Velocity Diff'] = [abs(vsys-z)\
+                for z in velocities]
+
+            table['Combined Diff']= [float(np.sqrt(((x/weights[1]).decompose()**2
+                +(y/weights[0]).decompose()**2))) for x,y in\
+                zip(table['Velocity Diff'],table['Spatial Diff'])]
+        else:
+            table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
+                * u.km/u.s
+            table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
+                * u.dimensionless_unscaled
+       
+    if not spectroscopic:    
         table.sort('Spatial Diff')
-    if print_in:
-        print(f'After sorting: {table}')
+    else:
+        table.sort('Combined Diff')
+    print_log(cfg,f'After sorting:\n {table}',case=['verbose'])
         
     return table
            

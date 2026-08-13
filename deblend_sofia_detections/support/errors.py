@@ -7,6 +7,9 @@ class InputError(Exception):
 class RegriddingError(Exception):
     '''Custom exception for regridding errors'''
     pass
+class RunTimeError(Exception):
+    '''Custom exception for run time errors'''
+    pass
 class SofiaError(Exception):
     '''Custom exception for SoFiA errors'''
     pass
