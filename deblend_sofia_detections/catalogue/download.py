@@ -304,7 +304,7 @@ def download_gaia_table(cfg):
         cfg.internal.gaia_table = f'{cfg.directories.ancillary_directory}/tables/cached_gaia_table.pkl'
 
 def download_ned_table(cfg):
-    # we are only running this if the user wants dowloads
+    # we are only running this if the user wants downloads
     if cfg.internal.ned_table.lower() == 'none':
         sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying NED for sources in the image area, this may take some time...",case=['screen'])  

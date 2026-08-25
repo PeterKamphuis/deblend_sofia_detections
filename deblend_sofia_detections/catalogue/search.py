@@ -19,6 +19,23 @@ import warnings
 
 import pickle
 
+
+def create_source_table(source,cfg=None,basename=None,sofia_directory='./'):
+    print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
+                    ,case=['verbose','screen'])
+    #First we check if we have previous iteration output
+
+    source = search_counter_part(cfg,source,basename=basename,
+        query = 'INTERNET',sofia_directory=sofia_directory,
+        insource='sofia')
+    source = search_counter_part(cfg,source,basename=basename,
+        query='Manual',sofia_directory=sofia_directory)
+    
+    
+    return source    
+  
+    
+
 def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
                      spectroscopic=True):
     
@@ -333,17 +350,15 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
             
             vsys = vsys.to(u.km/u.s)
            
-            table['Velocity Diff'] = [abs(vsys-z)\
-                for z in velocities]
-
-            table['Combined Diff']= [float(np.sqrt(((x/weights[1]).decompose()**2
-                +(y/weights[0]).decompose()**2))) for x,y in\
-                zip(table['Velocity Diff'],table['Spatial Diff'])]
+            table['Velocity Diff'] = np.abs(vsys - velocities)
+            table['Combined Diff'] = np.sqrt(
+                (table['Velocity Diff'] / weights[1]).decompose()**2 +
+                (table['Spatial Diff'] / weights[0]).decompose()**2
+            )
         else:
-            table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-                * u.km/u.s
-            table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-                * u.dimensionless_unscaled
+            n = len(table)
+            table['Velocity Diff'] = np.full(n, np.nan) * u.km/u.s
+            table['Combined Diff'] = np.full(n, np.nan) * u.dimensionless_unscaled
        
     if not spectroscopic:    
         table.sort('Spatial Diff')

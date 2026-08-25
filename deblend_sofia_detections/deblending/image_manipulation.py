@@ -1,6 +1,6 @@
 
 from deblend_sofia_detections.catalogue.search import \
-    search_counter_part
+   create_source_table
 
 from deblend_sofia_detections.deblending.sofia_functions import \
     load_sofia_input_file,set_sofia,write_sofia,read_sofia_table,\
@@ -14,7 +14,8 @@ from deblend_sofia_detections.support.table_functions import check_table_length,
 from deblend_sofia_detections.support.logging import print_log
 
 
-from astropy.convolution import convolve,Gaussian1DKernel
+#from astropy.convolution import convolve,Gaussian1DKernel
+from scipy.ndimage import gaussian_filter1d
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.nddata import Cutout2D
@@ -22,8 +23,9 @@ from astropy.nddata.utils import NoOverlapError
 from astropy.table import Table,QTable
 from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
-
-
+from multiprocessing import Pool
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 from photutils.background import Background2D # Background2D is used for background subtraction
 
 from deblend_sofia_detections.support.profiling import profile
@@ -95,12 +97,13 @@ def freq_smooth(cube, bin_size=0, smooth=0):
         for freq in range(cube.shape[0]//bin_size):
             cube_new[freq] = np.sum(cube[freq*bin_size : (freq+1)*bin_size], axis=0)
     elif smooth:    # smooth
-        cube_new = np.zeros_like(cube)
-        kernel = Gaussian1DKernel(smooth)
-        for i in range(cube.shape[1]):
-            for j in range(cube.shape[2]):
-                cube_new[:,i,j] = convolve(cube[:,i,j], kernel)
-        close_variables(kernel)
+        #cube_new = np.zeros_like(cube)
+        #kernel = Gaussian1DKernel(smooth)
+        cube_new = gaussian_filter1d(cube, sigma=smooth, axis=0, mode='nearest')
+        #for i in range(cube.shape[1]):
+        #    for j in range(cube.shape[2]):
+        #        cube_new[:,i,j] = convolve(cube[:,i,j], kernel)
+        #close_variables(kernel)
     else: cube_new = cube  # do nothing
     return cube_new
 
@@ -364,7 +367,7 @@ def split_sources(cfg_in,cube_name, mask,
                     abs(maskhdr['CDELT2'])]))*u.deg,
                        'channel_width': get_channel_width(maskhdr,velocity=True)}
     close_variables(maskhdr)
-
+   
     while not matched:
         # Run sofia
         print_log(cfg,f"Running SoFiA on {cube_name} with mask {mask} in {outdir}/Sofia_Output/sofia_input.par",
@@ -390,38 +393,30 @@ def split_sources(cfg_in,cube_name, mask,
         id = []
         replace_id = []
         #present_id = [int(x) for x in sources_to_split['id']]  
-        counterparts = {}  
+       
         watername= os.path.splitext(os.path.split(table_name)[-1])[0].split('_cat')[0]
         shutil.copy2(f"{outdir}/Sofia_Output/{watername}_mask.fits",f"{outdir}/Sofia_Output/tmp_mask.fits")
+        func = partial(create_source_table, cfg=cfg, basename=watername,sofia_directory=f'{outdir}/Sofia_Output/')
+      
+        with ThreadPoolExecutor(max_workers=cfg.general.ncpu) as executor:
+            # threads avoid pickling QTable rows entirely
+            source_results = list(executor.map(func,
+                [source for source in sources_to_split]))
         match_table = None
         source_dtypes = {}
-
-        #loop over the source
-        for source in sources_to_split:
-            print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
-                ,case=['verbose','screen'])
-            #First we check if we have previous iteration output
-
-            source = search_counter_part(cfg,source,basename=watername,
-                query = 'INTERNET',sofia_directory=f'{outdir}/Sofia_Output/',
-                insource='sofia')
-           
-            source = search_counter_part(cfg,source,basename=watername,
-                query='Manual',sofia_directory=f'{outdir}/Sofia_Output/') 
-            
+        counterparts = {}  
+        for source in source_results: 
             if (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
                 and not source['Manual_Object Name'][0] in [x for x in counterparts]\
                 and source['Manual_Object Name'][0] != 'NaN':
                 source['Name'] =  source['Manual_Object Name'][0]
-               
+                    
             elif source['INTERNET_spectroscopic'] and not \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
                 source['Name'] =  source['INTERNET_Object Name'][0]  
             else:
                 source['Name'] =  source['sofia_name'][0]
-           
-            source,source_dtypes = check_columns_dtype(cfg,source,source_dtypes)
-            
+                 
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
@@ -430,19 +425,20 @@ def split_sources(cfg_in,cube_name, mask,
                 counterparts[source_row['Name']] = source_row['sofia_id']
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has a counterpart in the catalogue. No replacement needed."
                     ,case=['verbose','screen'])
-
+        
             if source_row['Name'] == source_row['sofia_name']:
                 rep = closest_sofia_source(cfg,source_row['sofia_id'],sources_to_split,
                     header_info = header_info)
                 replace_id.append([int(source_row['sofia_id']),int(rep)])
             else:
-                id.append(source_row['sofia_id'])
+                id.append(int(source_row['sofia_id']))
+            
             if catalogue:
-                
+                source,source_dtypes = check_columns_dtype(cfg,source,source_dtypes)              
                 if match_table is None:
-                    match_table = QTable(source_row,copy=True)
+                    match_table = QTable(source[0],copy=True)
                 else:
-                    match_table.add_row(source_row)
+                    match_table.add_row(source[0])
            
       
         print_log(cfg,f"Found {len(id)} sources with a counterpart in the catalogue.", case=['verbose','screen'])
@@ -475,11 +471,15 @@ the counterparts map {counterparts}''', case=['verbose','screen'])
     shutil.copy2(f'{outdir}/Sofia_Output/tmp_mask.fits',f'{outdir}/final_mask.fits')    
 
     # Determine whether we need to split
-    if np.unique(maskin[0].data).size-1 == 1 or counter  > 50:
-        ret_val= False
-    else:
-        ret_val = True
-    close_variables(maskin,sources_to_split)
+    try:
+        if np.unique(maskin[0].data).size-1 == 1 or counter  > 50:
+            ret_val= False
+        else:
+            ret_val = True
+        close_variables(maskin,sources_to_split)
+    except UnboundLocalError:
+        ret_val = False
+        match_table = None
     return ret_val, match_table
 
 
