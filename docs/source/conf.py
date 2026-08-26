@@ -10,8 +10,8 @@ project = 'deblend-sofia-detections'
 copyright = '2025, P. Kamphuis'
 author = 'P. Kamphuis'
 
-release = '0.0'
-version = '0.0.3'
+release = '0.0.7'
+version = '0.0.7'
 
 # -- General configuration
 
