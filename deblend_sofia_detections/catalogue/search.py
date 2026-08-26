@@ -8,7 +8,7 @@ from deblend_sofia_detections.support.support_functions import convertRADEC,\
     get_channel_width,get_ned_requested_metadata
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.constants import C,rest_HI
-
+from deblend_sofia_detections.support.system_functions import join_path
 from astropy.io import fits
 from astropy.table import QTable,Table,vstack
 from datetime import datetime
@@ -21,10 +21,9 @@ import pickle
 
 
 def create_source_table(source,cfg=None,basename=None,sofia_directory='./'):
-    print_log(cfg,f"Processing deblended source with id {source['id']} and name {source['name']} "
+    print_log(cfg,f"Processing deblended source with id {source['id'][0]} and name {source['name'][0]} "
                     ,case=['verbose','screen'])
     #First we check if we have previous iteration output
-
     source = search_counter_part(cfg,source,basename=basename,
         query = 'INTERNET',sofia_directory=sofia_directory,
         insource='sofia')
@@ -117,6 +116,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
         case=['verbose'])
    
     input_dir = f'{sofia_directory}/{basename}_cubelets'
+    
     cube = fits.open(f'{input_dir}/{basename}_{inid}_cube.fits',\
         output_verify='warn')
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
