@@ -31,6 +31,7 @@ import pickle
 import shutil
 import warnings
 from datetime import datetime
+from multiprocessing import Pool
 # -*- coding: future_fstrings -*-
 
 
@@ -61,63 +62,95 @@ def check_source_size(cfg,segments,header):
   
     return segments  
 
-def check_source_surrounded(cfg,mask):
+def _count_borders_chunk(args):
+    """Count border pixel relationships for a chunk of non-zero pixel indices."""
+    indices_chunk, mask = args
+    local = {}
+    for index in indices_chunk:
+        sid = int(mask[index])
+        neighbours = mask[tuple(slice(max(0, i-1), i+2) for i in index)]
+        if (neighbours == sid).all():
+            continue
+        skey = f'{sid}'
+        if skey not in local:
+            local[skey] = {'total_border_pixels': 0, 'borders': {'0': 0}}
+        local[skey]['total_border_pixels'] += 1
+        if np.all((neighbours == 0) | (neighbours == sid)):
+            local[skey]['borders']['0'] += 1
+            continue
+        for neighbour in np.unique(neighbours):
+            if neighbour == sid:
+                continue
+            nkey = f'{neighbour}'
+            local[skey]['borders'][nkey] = local[skey]['borders'].get(nkey, 0) + 1
+    return local
+
+
+def check_source_surrounded(cfg, mask):
     """Check if the source in the mask is surrounded by another source."""
-    results = {}
-    # we need to do this until we no longer merge
+    ncpu = cfg.general.ncpu
     merge = True
     counter = 0
     while merge:
         results = {}
         counter += 1
         sources = np.unique(mask)
-        # if we have only one source we do not have to check if it is surrounded by another source
-        if counter > 3:
+        if counter > 10:
             print_log(cfg, f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.", case=['verbose'])
             raise RunTimeError(f"Source surrounded check has been run {counter} times. This is likely an infinite loop so we stop it here.")
-          
+        else:
+            print_log(cfg, f"Running source surrounded check iteration {counter}. Found {len(sources)-1} sources in the mask.", case=['verbose'])
         if len(sources)-1 <= 1:
             return mask
-        
-        # then lets set some initial values for the sources
+
         for source in sources:
             if source == 0:
                 continue
-            # Get the mask for the source
             source_mask = mask == source
-            results[f'{source}'] = {'id': source, 'surrounded': False, 
+            results[f'{source}'] = {'id': source, 'surrounded': False,
                 'mask': source_mask, 'total_no_pixels': np.sum(source_mask),
-                'total_border_pixels': 0, 
-                'borders': {'0':0}}
-        #indices = np.where(results['1']['mask'])
-        for index in zip(*np.nonzero(mask)):
-            id = mask[index]
-            # Check the neighbours in all dimensions
-            neighbours = mask[tuple(slice(max(0, i-1), i+2) for i in index)]
-            if (neighbours == id).all():  # No neighbours
-                continue
-            results[f'{id}']['total_border_pixels'] += 1
-            if np.all((neighbours == 0) | (neighbours == id)):
-                results[f'{id}']['borders'][f'0'] += 1
-                continue  # We have a border pixel
-            for source in np.unique(neighbours):
-                if source == id:
+                'total_border_pixels': 0,
+                'borders': {'0': 0}}
+
+        all_indices = list(zip(*np.nonzero(mask)))
+
+        if ncpu > 1:
+            chunk_size = max(1, len(all_indices) // ncpu)
+            chunks = [all_indices[i:i+chunk_size] for i in range(0, len(all_indices), chunk_size)]
+            with Pool(ncpu) as pool:
+                partial_results = pool.map(_count_borders_chunk, [(chunk, mask) for chunk in chunks])
+            for partial in partial_results:
+                for skey, counts in partial.items():
+                    if skey in results:
+                        results[skey]['total_border_pixels'] += counts['total_border_pixels']
+                        for bkey, cnt in counts['borders'].items():
+                            results[skey]['borders'][bkey] = results[skey]['borders'].get(bkey, 0) + cnt
+        else:
+            for index in all_indices:
+                id = mask[index]
+                neighbours = mask[tuple(slice(max(0, i-1), i+2) for i in index)]
+                if (neighbours == id).all():
                     continue
-                if f'{source}' not in results[f'{id}']['borders']:
-                    results[f'{id}']['borders'][f'{source}'] = 1
-                else:
-                    results[f'{id}']['borders'][f'{source}'] += 1
+                results[f'{id}']['total_border_pixels'] += 1
+                if np.all((neighbours == 0) | (neighbours == id)):
+                    results[f'{id}']['borders']['0'] += 1
+                    continue
+                for source in np.unique(neighbours):
+                    if source == id:
+                        continue
+                    if f'{source}' not in results[f'{id}']['borders']:
+                        results[f'{id}']['borders'][f'{source}'] = 1
+                    else:
+                        results[f'{id}']['borders'][f'{source}'] += 1
+
         merge = False
-        for source in results: 
-            #Get the longest border id
+        for source in results:
             if set(results[source]['borders'].keys()) == {'0'}:
                 continue
-            long_border= max(results[source]['borders'], key=results[source]['borders'].get)
+            long_border = max(results[source]['borders'], key=results[source]['borders'].get)
             if long_border != '0':
                 if results[source]['borders'][long_border] > results[source]['total_border_pixels']*0.7:
                     results[source]['surrounded'] = True
-                    # If the source is surrounded by another source we set the mask to th id
-                    
                     print_log(cfg, f'''Source {source} is for 70% surrounded by source {long_border}. 
 border with {long_border} = {results[source]['borders'][f'{long_border}']} pixels, 
 total border = {results[source]['total_border_pixels']} pixels. 
@@ -219,6 +252,40 @@ Time taken: {end - start}''', case=['verbose','screen'])
    
     return sources
 
+def watershed_on_cut_cube(data, markers, mask=None, connectivity=1,
+                              compactness=0.0):
+    """Run watershed only on the minimal bounding box that contains signal/markers."""
+    data = np.asarray(data)
+    markers = np.asarray(markers)
+    if mask is None:
+        mask = np.abs(data) > 0.
+    else:
+        mask = np.asarray(mask, dtype=bool)
+
+    if not np.any(mask) and not np.any(markers):
+        return np.zeros_like(data, dtype=np.int32)
+
+    active = mask | (markers != 0)
+    if not np.any(active):
+        return np.zeros_like(data, dtype=np.int32)
+
+    coords = np.where(active)
+    zmin, zmax = coords[0].min(), coords[0].max() + 1
+    ymin, ymax = coords[1].min(), coords[1].max() + 1
+    xmin, xmax = coords[2].min(), coords[2].max() + 1
+
+    data_crop = data[zmin:zmax, ymin:ymax, xmin:xmax]
+    markers_crop = markers[zmin:zmax, ymin:ymax, xmin:xmax]
+    mask_crop = mask[zmin:zmax, ymin:ymax, xmin:xmax]
+
+    result = watershed(-data_crop, markers_crop, mask=mask_crop,
+                       connectivity=connectivity, compactness=compactness)
+
+    out = np.zeros_like(data, dtype=result.dtype)
+    out[zmin:zmax, ymin:ymax, xmin:xmax] = result
+    return out
+
+
 def deblend_on_peaks(cfg,cube,cube_mask=None,previous_deblend=None,outdir='./',
         source_id = 'unknown'): 
     
@@ -269,9 +336,12 @@ We first smooth the cube''', case=['verbose'])
                 cube_header=cube[0].header,num_processes=cfg.general.ncpu)
     print_log(cfg, f"Found {len(peaks)} peaks in the cubelet {source_id}.", 
         case=['verbose'])
-   
-    res3d = watershed(-cube_smooth, markers3d, mask=np.abs(mask_smooth)>1e-6,
-        connectivity=1,compactness=cfg.input.compactness)
+    #res3d = watershed(-cube_smooth,markers3d,mask=np.abs(mask_smooth) > 1e-6,connectivity=1,
+    #    compactness=cfg.input.compactness)
+    res3d = watershed_on_cut_cube(cube_smooth,markers3d,
+        mask=np.abs(mask_smooth) > 1e-6,connectivity=1,
+        compactness=cfg.input.compactness,
+    )
     finalhdr = copy.deepcopy(cube[0].header)# Save the results
     if 'BSCALE' in finalhdr:
         del finalhdr['BSCALE']
@@ -730,9 +800,14 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         fits.writeto(f"{cfg.logging.log_directory}/markers_used_for_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
             markers_data, header=header, overwrite=True)
         cfg.internal.image_counter += 1
-        
-    watershed_output_1 = watershed(-data_ext, markers, mask=np.abs(data_ext)>1e-7, 
-        connectivity=connect,compactness=cfg.input.compactness)
+    if dimension == 3:
+        watershed_output_1 = watershed_on_cut_cube(data_ext,markers,
+                mask=np.abs(data_ext) > 1e-7,connectivity=connect,
+                compactness=cfg.input.compactness,
+            )    
+    else:
+        watershed_output_1 = watershed(-data_ext, markers, mask=np.abs(data_ext)>1e-7, 
+            connectivity=connect,compactness=cfg.input.compactness)
    
     print_log(cfg,f'completed initial watershed and found {np.unique(watershed_output_1)} segments ', 
         case=['verbose'])
@@ -769,7 +844,13 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         case=['verbose'])
             
     # rerun watershed
-    watershed_output_2 = watershed(-data_ext, markers, mask=np.abs(data_ext)>1e-7
+    if dimension == 3:
+        watershed_output_2 = watershed_on_cut_cube(data_ext,markers,
+                mask=np.abs(data_ext) > 1e-7,connectivity=2,
+                compactness=cfg.input.compactness,
+            )
+    else:
+        watershed_output_2 = watershed(-data_ext, markers, mask=np.abs(data_ext)>1e-7
             ,connectivity=2,compactness=cfg.input.compactness)
     if 'RUN_WATERSHED' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
         fits.writeto(f"{cfg.logging.log_directory}/second_watershed_mask_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",

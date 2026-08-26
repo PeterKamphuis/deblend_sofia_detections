@@ -8,7 +8,7 @@ from deblend_sofia_detections.support.support_functions import convertRADEC,\
     get_channel_width,get_ned_requested_metadata
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.constants import C,rest_HI
-
+from deblend_sofia_detections.support.system_functions import join_path
 from astropy.io import fits
 from astropy.table import QTable,Table,vstack
 from datetime import datetime
@@ -18,6 +18,22 @@ import numpy as np
 import warnings
 
 import pickle
+
+
+def create_source_table(source,cfg=None,basename=None,sofia_directory='./'):
+    print_log(cfg,f"Processing deblended source with id {source['id'][0]} and name {source['name'][0]} "
+                    ,case=['verbose','screen'])
+    #First we check if we have previous iteration output
+    source = search_counter_part(cfg,source,basename=basename,
+        query = 'INTERNET',sofia_directory=sofia_directory,
+        insource='sofia')
+    source = search_counter_part(cfg,source,basename=basename,
+        query='Manual',sofia_directory=sofia_directory)
+    
+    
+    return source    
+  
+    
 
 def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
                      spectroscopic=True):
@@ -100,6 +116,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
         case=['verbose'])
    
     input_dir = f'{sofia_directory}/{basename}_cubelets'
+    
     cube = fits.open(f'{input_dir}/{basename}_{inid}_cube.fits',\
         output_verify='warn')
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
@@ -333,17 +350,15 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
             
             vsys = vsys.to(u.km/u.s)
            
-            table['Velocity Diff'] = [abs(vsys-z)\
-                for z in velocities]
-
-            table['Combined Diff']= [float(np.sqrt(((x/weights[1]).decompose()**2
-                +(y/weights[0]).decompose()**2))) for x,y in\
-                zip(table['Velocity Diff'],table['Spatial Diff'])]
+            table['Velocity Diff'] = np.abs(vsys - velocities)
+            table['Combined Diff'] = np.sqrt(
+                (table['Velocity Diff'] / weights[1]).decompose()**2 +
+                (table['Spatial Diff'] / weights[0]).decompose()**2
+            )
         else:
-            table['Velocity Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-                * u.km/u.s
-            table['Combined Diff'] = [float('NaN') for x in table['Spatial Diff']]\
-                * u.dimensionless_unscaled
+            n = len(table)
+            table['Velocity Diff'] = np.full(n, np.nan) * u.km/u.s
+            table['Combined Diff'] = np.full(n, np.nan) * u.dimensionless_unscaled
        
     if not spectroscopic:    
         table.sort('Spatial Diff')
