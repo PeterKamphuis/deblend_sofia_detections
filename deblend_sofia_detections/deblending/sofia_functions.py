@@ -146,28 +146,32 @@ def execute_sofia(cfg,run_directory='Sofia_Output',
     indir = os.getcwd()
     os.chdir(f'{run_directory}')
     sfrun = subprocess.Popen([cfg.internal.sofia,sofia_parameter_file], stdout = subprocess.PIPE, stderr = subprocess.PIPE)
-    sofia_run, sofia_warnings_are_annoying = sfrun.communicate()
-   
-    print_log(cfg,sofia_run.decode("utf-8"),case=['verbose'])   
-    print_log(cfg,sofia_warnings_are_annoying.decode("utf-8"),case=['debug'])
-    
+    sofia_run, sofia_warnings_are_annoying = sfrun.communicate()    
     if sfrun.returncode == 8:
-        with open(f'sofia_output.txt','w') as file:
+        with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
             file.writelines(sofia_run.decode("utf-8"))
             file.writelines(sofia_warnings_are_annoying.decode("utf-8"))
-        os.chdir(indir)    
+        os.chdir(indir) 
+        print_log(cfg,f'''Sofia failed to find sources. Check {cfg.logging.log_directory}/sofia_output.txt for details.'''
+            ,case=['main','screen'])       
         return 'No sources found'
+    elif sfrun.returncode == 1:
+        with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
+            file.writelines(sofia_run.decode("utf-8"))
+            file.writelines(sofia_warnings_are_annoying.decode("utf-8"))
+        os.chdir(indir)
+        print_log(cfg,f'''Sofia failed to find negative sources. Check {cfg.logging.log_directory}/sofia_output.txt for details.'''
+            ,case=['main','screen'])    
+        return 'No negative sources found'
     elif sfrun.returncode != 0:
-        with open(f'sofia_output.txt','w') as file:
+        with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
             file.writelines(sofia_run.decode("utf-8"))
             file.writelines(sofia_warnings_are_annoying.decode("utf-8"))
         os.chdir(indir)    
-        raise SofiaError(f'Sofia run failed with return code {sfrun.returncode}. Check sofia_output.txt for details.')
+        raise SofiaError(f'Sofia run failed with return code {sfrun.returncode}. Check {cfg.logging.log_directory}/sofia_output.txt for details.')
     else:
-        if cfg.logging.enable_log and\
-            ('EXECUTE_SOFIA' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions):
-            with open(f'{cfg.logging.log_directory}/sofia_output.txt','w') as file:
-                file.writelines(sofia_run.decode("utf-8"))
+        print_log(cfg,sofia_run.decode("utf-8"),case=['debug'])
+         
            
        
     #Convert the ps files
