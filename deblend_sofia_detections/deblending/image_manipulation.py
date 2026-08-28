@@ -372,8 +372,9 @@ def split_sources(cfg_in,cube_name, mask,
         # Run sofia
         print_log(cfg,f"Running SoFiA on {cube_name} with mask {mask} in {outdir}/Sofia_Output/sofia_input.par",
             case=['verbose','screen'])
-        execute_sofia(cfg,run_directory=f'{outdir}/Sofia_Output/')
-
+        sofia_output = execute_sofia(cfg,run_directory=f'{outdir}/Sofia_Output/')
+        if sofia_output != 'Success':
+            raise RuntimeError(f"SoFiA execution failed for {cube_name} with mask {mask}. Please check the SoFiA output for errors.")
         #read the ouput table
         print_log(cfg,f"Reading the SoFiA output table from {outdir} the cube {name}",
             case=['verbose'])
