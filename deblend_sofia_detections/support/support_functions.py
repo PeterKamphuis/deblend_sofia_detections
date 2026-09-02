@@ -15,6 +15,7 @@ import copy
 import numpy as np
 import re
 import gc
+import warnings
 
 
 
@@ -82,8 +83,8 @@ def convert_pix_columns_to_arcsec(cfg,table,file):
 def convert_pixel_values_to_original(intable, cube_file_name,original_cube):
     original_hdr  = fits.getheader(original_cube)
     hdr = fits.getheader(cube_file_name)
-    original_wcs = WCS(original_hdr)
-    wcs_in = WCS(hdr)
+    original_wcs = create_WCS(original_hdr)
+    wcs_in = create_WCS(hdr)
     to_convert = ['','_min','_max']
     for conv_set in to_convert:
         for r in range(len(intable)):
@@ -194,7 +195,11 @@ convertRADEC.__doc__ =f'''
 
  NOTE:
 '''
-
+def create_WCS(hdr,**kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        wcs = WCS(hdr, **kwargs)
+    return wcs
 def get_channel_width(hdr,velocity=False):
     chwidth = hdr['CDELT3']
     if 'CUNIT3' in hdr:
@@ -225,6 +230,12 @@ def get_channel_width(hdr,velocity=False):
             raise UnitError(f'Your cube has a CUNIT3 of {hdr["CUNIT3"]} which is not recognized as a velocity unit. Please make sure it is in m/s, km/s, Hz or kHz')
     return chwidth
 
+def get_fits_header(file, **kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        hdr = fits.getheader(file, **kwargs)
+    return hdr
+
 def get_nan_for_dtype(dtype):
     """Return appropriate NaN value for given dtype"""
     dtype = np.dtype(dtype)
@@ -245,6 +256,8 @@ def get_nan_for_dtype(dtype):
         return np.timedelta64('NaT')
     else:
         return None
+
+
 
 def get_ned_requested_metadata(include_extra=False):
     requested_columns = ['Object Name', 'RA', 'DEC', 'Velocity', 'Type',
@@ -411,7 +424,11 @@ def read_unit_part(input_string,transform_in):
     
     return proc_unit,proc_transform,proc_power,remainder
 
-
+def open_fits_file(filename,**kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return fits.open(filename, **kwargs)
+    
 def regrid_array(oldarray, Out_Shape,max = False):
     oldshape = np.array(oldarray.shape)
     newshape = np.array(Out_Shape, dtype=float)
@@ -663,3 +680,9 @@ def quantity_array(list,unit):
     # Major design flaw in astropy unit and one think these nincompoops could incorporate a function like this 
     #Convert a list of quantities into quantity with a numpy array
     return np.array([x.to(unit).value for x in list],dtype=float)*unit 
+
+
+def write_fits_file(filename,data,header,**kwargs):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fits.writeto(filename,data,header, **kwargs)

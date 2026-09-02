@@ -8,7 +8,8 @@ from deblend_sofia_detections.deblending.sofia_functions import \
 from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
-    close_variables,get_channel_width
+    close_variables,get_channel_width,open_fits_file,create_WCS,write_fits_file,\
+    get_fits_header
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     check_columns_dtype
 from deblend_sofia_detections.support.logging import print_log
@@ -17,11 +18,9 @@ from deblend_sofia_detections.support.logging import print_log
 #from astropy.convolution import convolve,Gaussian1DKernel
 from scipy.ndimage import gaussian_filter1d
 from astropy.coordinates import SkyCoord
-from astropy.io import fits
 from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
-from astropy.table import Table,QTable
-from astropy.wcs import WCS
+from astropy.table import QTable
 from astropy.wcs.utils import proj_plane_pixel_scales
 from multiprocessing import Pool
 from concurrent.futures import ThreadPoolExecutor
@@ -42,8 +41,8 @@ import warnings
 
 
 def add_to_original(original_data, cut_data,sofia_id = 1):
-    original_wcs = WCS(original_data[0].header)
-    cut_wcs = WCS(cut_data[0].header)
+    original_wcs = create_WCS(original_data[0].header)
+    cut_wcs = create_WCS(cut_data[0].header)
     cut_origin = cut_wcs.wcs_pix2world(0,0,0,1)
     original_coord = original_wcs.wcs_world2pix(*cut_origin,1.)
     expanded_new = np.zeros_like(original_data[0].data)
@@ -59,7 +58,7 @@ def add_to_original(original_data, cut_data,sofia_id = 1):
 def cut_optical(cfg,hdr_over,wcs,imdir,image):
     '''Cut out the optical image'''
     #load a smaller part from a larger fits image
-    optical_image=fits.open(f'{imdir}/{image}',verify_output='ignore')
+    optical_image = open_fits_file(f'{imdir}/{image}',verify_output='ignore')
    
     try:
         hdr = optical_image[0].header
@@ -70,7 +69,7 @@ def cut_optical(cfg,hdr_over,wcs,imdir,image):
             data = optical_image.data
         except:
             return None
-    opt_wcs= WCS(hdr)
+    opt_wcs= create_WCS(hdr)
     sizecut = [hdr_over['NAXIS1'], hdr_over['NAXIS2']]
     centralpix = [hdr_over['NAXIS1']/ 2., hdr_over['NAXIS2']/ 2.]
     rascr, decscr = wcs.wcs_pix2world(*centralpix,1.)
@@ -244,7 +243,7 @@ Created the star mask to the optical image.''',case=['screen'])
 
 def mask_source_from_table(cfg,optical_markers,optical_header,mask=None, 
         src_table = None):
-    optical_wcs = WCS(optical_header)
+    optical_wcs = create_WCS(optical_header)
     if mask is None:
         masked_deb = np.full_like(optical_markers, 0)
     else: 
@@ -362,7 +361,7 @@ def split_sources(cfg_in,cube_name, mask,
     #Prepare to run sofia until all sources are matched.
     matched = False
     counter = 0
-    maskhdr= fits.getheader(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
+    maskhdr= get_fits_header(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
     header_info = {'pixelsize': float(np.mean([abs(maskhdr['CDELT1']),
                     abs(maskhdr['CDELT2'])]))*u.deg,
                        'channel_width': get_channel_width(maskhdr,velocity=True)}
@@ -403,17 +402,27 @@ def split_sources(cfg_in,cube_name, mask,
             # threads avoid pickling QTable rows entirely
             source_results = list(executor.map(func,
                 [source for source in sources_to_split]))
+            
         match_table = None
         source_dtypes = {}
         counterparts = {}  
+
         for source in source_results: 
-            if (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
-                and not source['Manual_Object Name'][0] in [x for x in counterparts]\
-                and source['Manual_Object Name'][0] != 'NaN':
-                source['Name'] =  source['Manual_Object Name'][0]
-                    
-            elif source['INTERNET_spectroscopic'] and not \
+            
+            print_log(cfg,f''' For source {source['sofia_id'][0]} with velocity {source['sofia_v_sofia'][0]} we find:
+Manual Object Name = {source['Manual_Object Name'][0]} and it is spectroscopic {source['Manual_spectroscopic'][0]}
+INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscopic {source['INTERNET_spectroscopic'][0]} with velocity {source['INTERNET_Velocity'][0]}
+''',case=['verbose','screen'])
+
+            
+            if source['Manual_Object Name'][0] in [x for x in counterparts] or \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
+                source['Name'] =  source['sofia_name'][0]
+            elif (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
+                and source['Manual_Object Name'][0] != 'NaN':
+                source['Name'] =  source['Manual_Object Name'][0]                    
+            elif source['INTERNET_spectroscopic'] and \
+                source['INTERNET_Object Name'][0] != 'NaN':
                 source['Name'] =  source['INTERNET_Object Name'][0]  
             else:
                 source['Name'] =  source['sofia_name'][0]
@@ -447,8 +456,8 @@ def split_sources(cfg_in,cube_name, mask,
         # If we have tried too many time we break
         if counter > 50:
             print_log(cfg,f"Warning: More than 50 matching counterparts for {name}.", case=['verbose'])
-            matched = True        
-        maskin= fits.open(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
+            matched = True 
+        maskin= open_fits_file(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')       
        
         #Checkin what we have
         print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
@@ -465,7 +474,7 @@ the counterparts map {counterparts}''', case=['verbose','screen'])
             for pair in replace_id:
                 print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose','screen'])
                 maskin[0].data[maskin[0].data == pair[0]] = pair[1]
-            fits.writeto(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
+            write_fits_file(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
                  overwrite=True,output_verify='ignore')
        
     # Copying the final mask to the output directory 

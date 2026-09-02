@@ -3,7 +3,7 @@ from deblend_sofia_detections import template as templates
 from deblend_sofia_detections.support.errors import InputError,SofiaError
 from deblend_sofia_detections.support.support_functions import \
     convert_pix_columns_to_arcsec,translate_string_to_unit,get_source_cat_name,\
-    get_start_end_locations,convert_pixel_values_to_original
+    get_start_end_locations,convert_pixel_values_to_original,open_fits_file
 from deblend_sofia_detections.support.system_functions import convert_ps,join_path
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.constants import C,rest_HI
@@ -14,7 +14,7 @@ except ImportError:
     from importlib_resources import open_text as pack_open_txt
 
 from astropy.table import QTable
-from astropy.io import votable,fits
+from astropy.io import votable
 from astropy import units as u
 
 import os
@@ -486,7 +486,8 @@ def mark_as_deblended(cfg,sofia_directory=None,sofia_basename=None):
     for f in files_to_mark:
         print_log(cfg,f'Marking {f} as deblended',case=['verbose'])
         cube_name = f'{sofia_directory}/{sofia_basename}_cubelets/{f}'
-        with fits.open(cube_name, mode='update') as file:
+
+        with open_fits_file(cube_name, mode='update') as file:
             file[0].header['SOF_DEB'] = True
             
   
