@@ -212,10 +212,16 @@ def search_counter_part(cfg,source,sofia_directory= './',
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = False
-    
+   
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')
+    for col in final_row.colnames:
+        current_dtype = np.dtype(final_row[col].dtype)
+        if current_dtype.kind == 'U':
+            current_chars = current_dtype.itemsize // np.dtype('U1').itemsize
+            if current_chars < 30:
+                 final_row[col] = final_row[col].astype('U30')
     close_variables(spectroscopic_table)
     return final_row
 

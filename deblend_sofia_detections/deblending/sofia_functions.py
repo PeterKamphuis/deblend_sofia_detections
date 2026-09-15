@@ -192,8 +192,8 @@ def load_sofia_basename(filename):
     return os.path.basename(os.path.splitext(input_file['input.data'])[0])
 
 def load_sofia_catalogue(cfg,filename, variables = None,no_conversion=False):
-    '''Read a specified sofia table into a Astropy QTable'''   
-    print_log(cfg,f'Reading the sofia catalogue {filename}. \n',case=['debug','screen'] )  
+    '''Read a specified sofia table into a Astropy QTable'''    
+    print_log(cfg,f'Reading the sofia catalogue {filename}. \n',case=['debug'] )
     if filename.endswith('.xml'): 
         sources = read_sofia_xml(cfg,filename)
     else:
@@ -379,7 +379,7 @@ probably no sources were found or you made a mistake.''',case=['verbose'])
         return None,None
     req_variables = ['name','f_sum','err_f_sum','id','ell3s_maj',
         'ell3s_min','w20','ra','dec','v_sofia','kin_pa','x','y','z',
-        'x_min','x_max','y_min','y_max',
+        'x_min','x_max','y_min','y_max', 'z_min','z_max',
         'f_max','ell_maj','ell_min','rms','ell_pa']
 
     sources = load_sofia_catalogue(cfg,table_name,

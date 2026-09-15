@@ -75,10 +75,12 @@ configuration_file = ''')
     cfg = OmegaConf.merge(cfg,inputconf) 
   
     #open the input parameter file to obtain the data cube and output locations
+  
     if single_cube:
         cfg = check_single_cube_input(cfg)
     else:
         cfg = read_parameter_input(cfg)
+  
     cfg = directory_check(cfg)
     if cfg.directories.run_directory != os.getcwd():
         os.chdir(cfg.directories.run_directory)
@@ -141,7 +143,8 @@ def check_single_cube_input(cfg):
     return cfg
 
 def directory_check(cfg):
-    dirs = ['data_directory', 'run_directory', 'ancillary_directory', 'watershed_directory']
+    dirs = ['data_directory', 'run_directory', 'ancillary_directory', 
+        'watershed_directory']
     
     if cfg.sofia.directory[-1] != '/':
         cfg.sofia.directory += '/'
@@ -156,18 +159,16 @@ def directory_check(cfg):
         cfg.directories.watershed_directory = join_path(cfg.sofia.directory,
             cfg.directories.watershed_directory)
         directories_to_create.append(cfg.directories.watershed_directory)
-
+   
     cfg.internal.input_log_directory = copy.deepcopy(cfg.logging.log_directory)
     cfg.internal.input_log_file = copy.deepcopy(cfg.logging.log_file)    
- 
-
-
     for attr in dirs:
         test_dir = getattr(cfg.directories, attr)
         directories_to_check.append(test_dir)
         if test_dir[-1] != '/':
             test_dir += '/'
             setattr(cfg.directories , attr, test_dir)
+    
     if cfg.input.internet_query.lower() != 'none':
         directories_to_check.append(f'{cfg.directories.ancillary_directory}/tables/')
         directories_to_create.append(f'{cfg.directories.ancillary_directory}/tables/')

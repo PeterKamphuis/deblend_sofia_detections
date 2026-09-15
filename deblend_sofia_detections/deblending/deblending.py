@@ -28,7 +28,6 @@ import numpy as np
 import os
 import pickle
 import shutil
-import warnings
 from datetime import datetime
 from multiprocessing import Pool
 # -*- coding: future_fstrings -*-

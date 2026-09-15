@@ -53,6 +53,7 @@ def main():
     argv=sys.argv[1:]
     '''Set up the configuration as input by the user'''
     cfg = setup_config(argv)
+  
     deblend_sofia_detections(cfg)
 
 

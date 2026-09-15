@@ -6,9 +6,10 @@ from deblend_sofia_detections.deblending.image_manipulation import cut_optical
 from deblend_sofia_detections.support.errors import DownloadError
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.table_functions import check_table_length
-from deblend_sofia_detections.support.support_functions import get_ned_requested_metadata
+from deblend_sofia_detections.support.support_functions import get_ned_requested_metadata,\
+    get_fits_header,write_fits_file
 from astropy import time, units as u
-from astropy.io import fits
+
 from astroquery.skyview import SkyView
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
@@ -186,7 +187,7 @@ def creating_full_FOV_optical(cfg):
     cube_ext = cfg.internal.cube_ext
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0{cube_ext}')
+        mom0_header = get_fits_header(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0{cube_ext}')
         mom0_wcs = WCS(mom0_header).celestial
 
     obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,
@@ -206,7 +207,7 @@ def creating_full_FOV_optical(cfg):
 
             cutout_hdr = cutout.wcs.to_header()
             cutout_hdr['COMMENT'] =  f'The original file was  {identifier}'
-            fits.writeto(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
+            write_fits_file(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
 
             return
     print_log(cfg, f'''Obtaining the actual image list with the following parameters:
@@ -446,7 +447,7 @@ def get_cutout_region(cfg,mom0_header=None,mom0_wcs=None):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")     
         if mom0_header is None:
-            mom0_header = fits.getheader(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
+            mom0_header = get_fits_header(f'{cfg.sofia.directory}/{cfg.sofia.basename}_mom0.fits')
         if mom0_wcs is None:
             mom0_wcs = WCS(mom0_header).celestial
     #set the size of the image

@@ -37,22 +37,6 @@ def calculate_projected_distance(coord1,coord2,no_PA=False):
     return separation,projected_PA.to(u.deg)
 
 
-def calculate_projected_distance_old(coord1,coord2,no_PA=False): 
-    '''Calculate the projected distance between two coordinates'''
-    sk1 = SkyCoord(*coord1)
-    sk2 = SkyCoord(*coord2)
-    separation = sk1.separation(sk2).degree*u.deg
-    if no_PA:
-        return separation
-   
-    projected_PA=((np.degrees(np.arcsin(((coord1[1].to(u.deg)-coord2[1].to(u.deg))\
-                                    /separation.to(u.deg)).value)))+90.)*u.deg
-    
-    if coord1[0]-coord2[0] > 0.:
-        projected_PA=360.*u.deg-projected_PA
-  
-    return (separation,projected_PA.to(u.deg))
-
 def close_variables(*args):
     for var in args:
         if hasattr(var,'close'):

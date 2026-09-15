@@ -61,8 +61,12 @@ def check_columns_dtype(cfg,table,dtypes_in):
             if target_dtype.kind == 'U' and current_dtype.kind == 'U':
                 current_chars = current_dtype.itemsize // np.dtype('U1').itemsize
                 target_chars = target_dtype.itemsize // np.dtype('U1').itemsize
+                if target_chars < 50:
+                    target_chars = 50
+                    target_dtype = np.dtype(f'U{target_chars}')
                 if target_chars < current_chars:
                     target_dtype = current_dtype
+                
             table[col] = table[col].astype(target_dtype)
         except Exception as e:
             print_log(cfg,
@@ -180,18 +184,12 @@ def combine_tables(tableone, tabletwo, column_indicators=[None,None]):
             else:
                 inputrows[j] += newrow
     
-    # Create the combined table
-   
-    combined_table = QTable(names=input_columns, units=convert_units, dtype=dtypes)
-   
-    # Add rows to the combined table
-   
+    # Create the combined table in one go to avoid expensive row-by-row insertion.
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        for row in inputrows:
-            combined_table.add_row(row)
-  
-   
+        combined_table = QTable(rows=inputrows, names=input_columns,
+            units=convert_units, dtype=dtypes)
+
     return combined_table
 
 def copy_table_header(input_table):

@@ -267,8 +267,15 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
             ,case=['debug'])
         src_table['PA'] = np.full(len(src_table), 0.) * u.deg
   
-    maj_sizes = ["sma",'major_axis','maj_ang_size','maj_angsize']
-    min_sizes = ["smb",'minor_axis','min_ang_size','min_angsize','e','ellipticity']
+    major_size = ['major_axis','maj_ang_size','maj_angsize']
+    semi_major_size = ['sma']
+    for size in major_size:
+        semi_major_size += [f'semi_{size}']
+    minor_size = ['minor_axis','min_ang_size','min_angsize']
+    semi_minor_size = ['smb']
+    for size in minor_size:
+        semi_minor_size += [f'semi_{size}']
+    semi_minor_size += ['e','ellipticity']
     source_counter = 1
     # Pre-filter rows with NaN coordinates/PA and batch-convert to pixel coords
     all_indices = np.array(range(check_table_length(src_table)))
@@ -290,14 +297,23 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
         xcen = all_xcens[loop_idx]
         ycen = all_ycens[loop_idx]
 
-        sma = 10.* pixel_scale.to(u.arcsec)
-        for size in maj_sizes:
+        sma = None
+        for size in semi_major_size:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):
                     sma = src_table[size][i].to(u.arcsec)
                     break
-        smb = float('NaN')
-        for size in min_sizes:
+        if sma is None:
+            for size in major_size:
+                if size in src_table.colnames:
+                    if not np.isnan(src_table[size][i]):
+                        sma = src_table[size][i].to(u.arcsec)/2.
+                        break
+        if sma is None:
+            sma= 10.*u.arcsec
+        
+        smb = None
+        for size in semi_minor_size:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):
                     if size in ['e','ellipticity']:
@@ -305,7 +321,14 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
                     else:
                         smb = src_table[size][i].to(u.arcsec)
                     break
-        if np.isnan(smb):
+        if smb is None:
+            for size in minor_size:
+                if size in src_table.colnames:
+                    if not np.isnan(src_table[size][i]):
+                        smb = src_table[size][i].to(u.arcsec)
+                        break
+                    
+        if smb is None:
             print_log(cfg,f"No valid minor axis size found for source {src_table['RA'][i], src_table['DEC'][i]}. Defaulting to a circle with radius =  {sma}."
                 ,case=['debug'])
             smb = sma   
