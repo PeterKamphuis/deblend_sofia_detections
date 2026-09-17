@@ -25,6 +25,17 @@ import pickle
 import time
 
 
+class _NullGate:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+_NULL_GATE = _NullGate()
+
+
 def _format_duration(seconds):
     seconds = int(max(0, round(seconds)))
     mins, secs = divmod(seconds, 60)
@@ -67,7 +78,7 @@ def _query_ned_with_retries(cfg, Ned, query_errors, coords, query_size):
         except query_errors as e:
             print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
             if attempt < 2:
-                time.sleep(5.)
+                time.sleep(1.)
     return table
 
 
@@ -105,81 +116,113 @@ def _query_chunk_timed(worker_fn, worker_args, sub_coords, chunk_size):
 
 
 def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn,
-    worker_args, service_label):
-    if size_quantity <= max_chunk_size:
-        return worker_fn(*worker_args, sky_coords, size_quantity)
+    worker_args, service_label, internet_query_gate=_NULL_GATE):
+    with internet_query_gate:
+        if size_quantity <= max_chunk_size:
+            return worker_fn(*worker_args, sky_coords, size_quantity)
 
-    n_chunks = int(np.ceil((size_quantity/max_chunk_size).decompose().value))
-    chunk_size = size_quantity / n_chunks
-    chunk_tables = []
-    total_chunks = n_chunks**2
-    non_empty_chunk_count = 0
-    empty_chunk_count = 0
-    failed_chunk_count = 0
-    ncpu = max(1, int(getattr(cfg.general, 'ncpu', 1)))
+        n_chunks = int(np.ceil((size_quantity/max_chunk_size).decompose().value))
+        chunk_size = size_quantity / n_chunks
+        chunk_tables = []
+        total_chunks = n_chunks**2
+        non_empty_chunk_count = 0
+        empty_chunk_count = 0
+        failed_chunk_count = 0
+        ncpu = max(1, int(getattr(cfg.general, 'ncpu', 1)))
 
-    print_log(cfg,
-        f'Splitting {service_label} query into {total_chunks} chunks with size {chunk_size.to(u.arcmin):.2f}',
-        case=['verbose','screen'])
-    print_log(cfg, f'Using {ncpu} workers for {service_label} chunk queries.', case=['verbose','screen'])
+        print_log(cfg,
+            f'Splitting {service_label} query into {total_chunks} chunks with size {chunk_size.to(u.arcmin):.2f}',
+            case=['verbose'])
+        print_log(cfg, f'Using {ncpu} workers for {service_label} chunk queries.',
+            case=['verbose'])
 
-    subcoords = _build_chunk_subcoords(sky_coords, n_chunks, chunk_size)
-    started_at = time.time()
-    completed_chunks = 0
+        subcoords = _build_chunk_subcoords(sky_coords, n_chunks, chunk_size)
+        started_at = time.time()
+        completed_chunks = 0
 
-    with ThreadPoolExecutor(max_workers=ncpu) as executor:
-        futures = [
-            executor.submit(_query_chunk_timed, worker_fn, worker_args, sub_coord, chunk_size)
-            for sub_coord in subcoords
-        ]
-        for future in as_completed(futures):
-            sub_table, chunk_elapsed = future.result()
-            if sub_table is None:
-                failed_chunk_count += 1
-            else:
-                if check_table_length(sub_table) > 0:
-                    non_empty_chunk_count += 1
-                    chunk_tables.append(sub_table)
+        if ncpu == 1:
+            # Run serially to avoid spawning worker threads for services that are not thread-safe.
+            for sub_coord in subcoords:
+                sub_table, chunk_elapsed = _query_chunk_timed(worker_fn, worker_args, sub_coord, chunk_size)
+                if sub_table is None:
+                    failed_chunk_count += 1
                 else:
-                    empty_chunk_count += 1
+                    if check_table_length(sub_table) > 0:
+                        non_empty_chunk_count += 1
+                        chunk_tables.append(sub_table)
+                    else:
+                        empty_chunk_count += 1
 
-            completed_chunks += 1
-            elapsed = time.time() - started_at
-            average_per_chunk = elapsed / completed_chunks
-            eta = average_per_chunk * (total_chunks - completed_chunks)
-            progress_bar = _build_progress_bar(completed_chunks, total_chunks)
-            print(
-                f'\r{service_label} {progress_bar} '
-                f'chunk {completed_chunks}/{total_chunks} '
-                f'chunk_time={chunk_elapsed:5.1f}s '
-                f'elapsed={_format_duration(elapsed)} '
-                f'ETA={_format_duration(eta)}',
-                end='', flush=True)
-    print()
+                completed_chunks += 1
+                elapsed = time.time() - started_at
+                average_per_chunk = elapsed / completed_chunks
+                eta = average_per_chunk * (total_chunks - completed_chunks)
+                progress_bar = _build_progress_bar(completed_chunks, total_chunks)
+                print(
+                    f'\r{service_label} {progress_bar} '
+                    f'chunk {completed_chunks}/{total_chunks} '
+                    f'chunk_time={chunk_elapsed:5.1f}s '
+                    f'elapsed={_format_duration(elapsed)} '
+                    f'ETA={_format_duration(eta)}',
+                    end='', flush=True)
+        else:
+            with ThreadPoolExecutor(max_workers=ncpu) as executor:
+                futures = [
+                    executor.submit(_query_chunk_timed, worker_fn, worker_args, sub_coord, chunk_size)
+                    for sub_coord in subcoords
+                ]
+                for future in as_completed(futures):
+                    sub_table, chunk_elapsed = future.result()
+                    if sub_table is None:
+                        failed_chunk_count += 1
+                    else:
+                        if check_table_length(sub_table) > 0:
+                            non_empty_chunk_count += 1
+                            chunk_tables.append(sub_table)
+                        else:
+                            empty_chunk_count += 1
 
-    print_log(cfg,
-        f'{service_label} chunk summary: total={total_chunks}, non_empty={non_empty_chunk_count}, empty={empty_chunk_count}, failed={failed_chunk_count}',
-        case=['verbose','screen'])
+                    completed_chunks += 1
+                    elapsed = time.time() - started_at
+                    average_per_chunk = elapsed / completed_chunks
+                    eta = average_per_chunk * (total_chunks - completed_chunks)
+                    progress_bar = _build_progress_bar(completed_chunks, total_chunks)
+                    print(
+                        f'\r{service_label} {progress_bar} '
+                        f'chunk {completed_chunks}/{total_chunks} '
+                        f'chunk_time={chunk_elapsed:5.1f}s '
+                        f'elapsed={_format_duration(elapsed)} '
+                        f'ETA={_format_duration(eta)}',
+                        end='', flush=True)
+        print()
 
-    if failed_chunk_count > 0:
-        raise RuntimeError(
-            f'{service_label} chunked query failed: {failed_chunk_count}/{total_chunks} chunks failed.')
+        print_log(cfg,
+            f'{service_label} chunk summary: total={total_chunks}, non_empty={non_empty_chunk_count}, empty={empty_chunk_count}, failed={failed_chunk_count}',
+            case=['verbose','screen'])
 
-    if len(chunk_tables) == 0:
-        return None
-    if len(chunk_tables) == 1:
-        internet_table = chunk_tables[0]
+        if failed_chunk_count > 0:
+            raise RuntimeError(
+                f'{service_label} chunked query failed: {failed_chunk_count}/{total_chunks} chunks failed.')
+
+        if len(chunk_tables) == 0:
+            return None
+        if len(chunk_tables) == 1:
+            internet_table = chunk_tables[0]
+        else:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                internet_table = vstack(chunk_tables)
+
+        print_log(cfg,
+            f'{service_label} chunked query completed with {check_table_length(internet_table)} unfiltered results',
+            case=['screen'])
+        return internet_table
+
+def creating_full_FOV_optical(cfg, runtime_ctx=None):
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
     else:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            internet_table = vstack(chunk_tables)
-
-    print_log(cfg,
-        f'{service_label} chunked query completed with {check_table_length(internet_table)} unfiltered results',
-        case=['screen'])
-    return internet_table
-
-def creating_full_FOV_optical(cfg):
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
    
@@ -215,7 +258,8 @@ object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''', case=['verbose'])
     SkyView.clear_cache()
-    sky_view_list = SkyView.get_image_list(position=obj_coords,
+    with internet_query_gate:
+        sky_view_list = SkyView.get_image_list(position=obj_coords,
                                    radius = size_quantity,
                                    coordinates = "J2000",
                                    pixels = size_pixels,
@@ -225,28 +269,33 @@ pixels: {size_pixels},''', case=['verbose'])
                                    survey=['DSS2 Red'])
 
  
-    print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
+        print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
 {sky_view_list}
-              ''', case=['verbose'])
-    for path in sky_view_list:
-        print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
+                ''', case=['verbose'])
+        for path in sky_view_list:
+            print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
 This can take a while.''', case=['verbose'])
-        filename = path.split("/")[-1]
-        print_log(cfg, f'Downloading {filename} from SkyView from {path}')
-        urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
-        if os.path.isfile(f'{cfg.internal.optical_background}'):
-            print_log(cfg, "Successfully downloaded the image")
-            #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
-        else:
-            print_log(cfg, "Failed to obtain the image from SkyView")
-            raise DownloadError(f'''Failed to download the image from SkyView: {path}
+            filename = path.split("/")[-1]
+            print_log(cfg, f'Downloading {filename} from SkyView from {path}')
+            urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
+            if os.path.isfile(f'{cfg.internal.optical_background}'):
+                print_log(cfg, "Successfully downloaded the image")
+                #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
+            else:
+                print_log(cfg, "Failed to obtain the image from SkyView")
+                raise DownloadError(f'''Failed to download the image from SkyView: {path}
 Check your internet connection and the SkyView service status.
 Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.
-''')
+    ''')
 
 
 
-def download_gaia_table(cfg):
+def download_gaia_table(cfg,runtime_ctx=None):
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
+    else:
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
+
     sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
     # we are only running this if the user wants dowloads
     if cfg.internal.gaia_table.lower() == 'none':
@@ -279,8 +328,9 @@ def download_gaia_table(cfg):
                     gaia_table = vstack([gaia_table, gaia_table_sub])
                 print_log(cfg,f"Found {len(gaia_table_sub)} Gaia sources in the sub-region. (total so far: {len(gaia_table)})",
                           case=['verbose','screen'])
-        '''            
-        gaia_table = Gaia.query_object_async(sky_coords, width=size_quantity*1.2, height=size_quantity*1.2)
+        '''
+        with internet_query_gate:
+            gaia_table = Gaia.query_object_async(sky_coords, width=size_quantity*1.2, height=size_quantity*1.2)
         print_log(cfg,f"Found {len(gaia_table)} Gaia sources in the image area. Sorting them"
             ,case=['debug'])
         #Remove galaxy canditates
@@ -304,9 +354,13 @@ def download_gaia_table(cfg):
             pickle.dump(gaia_table,tmp) 
         cfg.internal.gaia_table = f'{cfg.directories.ancillary_directory}/tables/cached_gaia_table.pkl'
 
-def download_ned_table(cfg):
+def download_ned_table(cfg, runtime_ctx=None):
     # we are only running this if the user wants downloads
     if cfg.internal.ned_table.lower() == 'none':
+        if runtime_ctx is None:
+            internet_query_gate = _NULL_GATE
+        else:
+            internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
         sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying NED for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.ipac.ned import Ned
@@ -317,7 +371,8 @@ def download_ned_table(cfg):
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
         internet_table = _run_chunked_query(
             cfg, sky_coords, size_quantity, max_chunk_size,
-            _query_ned_with_retries, (cfg, Ned, query_errors), 'NED')
+            _query_ned_with_retries, (cfg, Ned, query_errors), 'NED',
+            internet_query_gate=internet_query_gate)
 
         if internet_table is not None:
             print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])
@@ -366,9 +421,13 @@ def download_ned_table(cfg):
             pickle.dump(search_table,tmp) 
         cfg.internal.ned_table = f'{cfg.directories.ancillary_directory}/tables/cached_ned_table.pkl'   
 
-def download_simbad_table(cfg):
+def download_simbad_table(cfg, runtime_ctx=None):
     # we are only running this if the user wants dowloads
     if cfg.internal.simbad_table.lower() == 'none':
+        if runtime_ctx is None:
+            internet_query_gate = _NULL_GATE
+        else:
+            internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
         sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying Simbad for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.simbad import Simbad
@@ -379,7 +438,8 @@ def download_simbad_table(cfg):
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
         internet_table = _run_chunked_query(
             cfg, sky_coords, size_quantity, max_chunk_size,
-            _query_simbad_with_retries, (cfg, Simbad, query_errors), 'SIMBAD')
+            _query_simbad_with_retries, (cfg, Simbad, query_errors), 'SIMBAD',
+            internet_query_gate=internet_query_gate)
 
           
         print_log(cfg, f'SIMBAD query completed with originally {check_table_length(internet_table)} results', case=['screen'])  

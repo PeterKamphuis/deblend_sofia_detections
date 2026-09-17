@@ -86,7 +86,10 @@ configuration_file = ''')
         os.chdir(cfg.directories.run_directory)
     cfg = background_check(cfg)
     cfg = check_debug_functions(cfg)
-   
+    if cfg.input.manual_markers_only and cfg.input.use_optical_deblending\
+        and cfg.input.manual_input_tables[0] is None:
+        print(f"You requested manual markers only but have not provided a table.")
+        raise InputError(f"You requested manual markers only but have not provided a table.")
     return cfg
 
 def check_debug_functions(cfg):

@@ -30,6 +30,7 @@ import pickle
 import shutil
 from datetime import datetime
 from multiprocessing import Pool
+from threading import BoundedSemaphore
 # -*- coding: future_fstrings -*-
 
 
@@ -450,7 +451,7 @@ We first smooth the cube''', case=['verbose'])
     close_variables(cube_smooth,mask_smooth,res3d,markers3d)
     return result
 
-def deblend_single_detection(cfg):
+def deblend_single_detection(cfg, runtime_ctx=None):
     """
     Deblend a single source in the given data cube.
 
@@ -459,10 +460,9 @@ def deblend_single_detection(cfg):
     
     """
     print_log(cfg,f"Checking the source in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
-
-      
+   
     #obtain the ancillary data
-    obtain_ancillary_data(cfg)
+    obtain_ancillary_data(cfg, runtime_ctx=runtime_ctx)
     mask = open_fits_file(f'{cfg.sofia.directory}/{cfg.sofia.original_mask}')
     max_source_id_original = np.max(mask[0].data)
     max_source_id = copy.deepcopy(max_source_id_original)
@@ -494,7 +494,7 @@ def deblend_single_detection(cfg):
 
 
 @profile('profiler_logs/deblend_sofia_detections.log')
-def deblend_sofia_detections(cfg):
+def deblend_sofia_detections(cfg, runtime_ctx=None):
     """
     Deblend all sources in the given data cube.
 
@@ -510,7 +510,7 @@ def deblend_sofia_detections(cfg):
         no_conversion = True)
     
     #obtain the ancillary data
-    obtain_ancillary_data(cfg)
+    obtain_ancillary_data(cfg, runtime_ctx=runtime_ctx)
 
     cubelets_dir = f'{cfg.sofia.directory}/{cfg.sofia.basename}_cubelets/'
     max_source_id_original = np.max([int(x) for x in sources['id']])
@@ -579,12 +579,13 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     # As we only know for certain that the target has an optical counterpart we need a single source but
     # not necessarily more but if we have only one there is no point deblending
     segm_deblend = np.zeros(optical_image[0].data.shape)
-    while np.max(segm_deblend) < 2 and npixels > 20.:
-        segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels=npixels,mask=inv_mask)
-        if segm_deblend is None:
-            print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
-            segm_deblend = np.zeros(optical_image[0].data.shape)
-        npixels -= 10
+    if not cfg.input.manual_markers_only:
+        while np.max(segm_deblend) < 2 and npixels > 20.:
+            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels=npixels,mask=inv_mask)
+            if segm_deblend is None:
+                print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
+                segm_deblend = np.zeros(optical_image[0].data.shape)
+            npixels -= 10
       
    
     if np.max(segm_deblend) > 0:
@@ -602,11 +603,11 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
 
     return masked_deb,optical_image[0].header,hi_mask
-def obtain_ancillary_data(cfg):
+def obtain_ancillary_data(cfg, runtime_ctx=None):
     #get an optical background image
     if not os.path.exists(f'{cfg.internal.optical_background}'):
         print_log(cfg,f"Creating the full FOV optical image for {cfg.sofia.original_data_cube}.",case= ['verbose'])
-        creating_full_FOV_optical(cfg)
+        creating_full_FOV_optical(cfg, runtime_ctx=runtime_ctx)
     
 
     #download catalogues if requested.
@@ -619,17 +620,17 @@ We will still use any cached tables if available in {cfg.directories.ancillary_d
         if cfg.input.use_optical_deblending:
             #Download the gaia table for the full FOV optical image
             try:
-                download_gaia_table(cfg)  
+                download_gaia_table(cfg, runtime_ctx=runtime_ctx)  
             except Exception as e:
                 print_log(cfg, f"Failed to download Gaia table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['NED','ALL']:
             try:
-                download_ned_table(cfg)
+                download_ned_table(cfg, runtime_ctx=runtime_ctx)
             except Exception as e:
                 print_log(cfg, f"Failed to download NED table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['SIMBAD','ALL']:
             try:
-                download_simbad_table(cfg)
+                download_simbad_table(cfg, runtime_ctx=runtime_ctx)
             except Exception as e:
                 print_log(cfg, f"Failed to download SIMBAD table: {e}", case=['verbose','screen'])  
               
@@ -965,8 +966,10 @@ def set_optical_markers(cfg,sofia_id, mask,outdir= None):
     if len(mask.shape) > 2:
         mask = np.nansum(mask, axis=0)
     # detect from the optical image
+   
     detected_optical_markers,detected_optical_markers_header,used_mask = \
         detect_optical_sources(cfg,mask=mask,source_id=sofia_id)
+  
     # and we want to add any source we know to exist
     if not cfg.input.manual_input_tables[0] is None:
         print_log(cfg, "Adding the manual optical source table.", case=['verbose'])

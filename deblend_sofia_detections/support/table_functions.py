@@ -216,14 +216,17 @@ def identify_object_names(cfg,table):
     - Updated table with the identified object name column.
     """
     clear_name_columns = ['name', 'galaxy', 'object', 'NGC', 'IC', 'UGC',
-                           'PGC', 'ESO', '2MASX', 'SDSS', 'WISEA']
+                           'PGC', 'ESO', '2MASX', 'SDSS', 'WISEA', 'Object Name']
     check_name_columns = ['id', 'identifier']
+    clear_name_columns = [x.lower() for x in clear_name_columns]
+    check_name_columns = [x.lower() for x in check_name_columns]
     found = False
     for col in table.colnames:
         if col.lower() in clear_name_columns:
-            table['Object Name'] = table[col].copy()
-            found = True
-            break 
+            if col != 'Object Name':
+                table['Object Name'] = table[col].copy()
+                found = True
+                break 
     if not found:
         for col in table.colnames:
             if col.lower() in check_name_columns:
