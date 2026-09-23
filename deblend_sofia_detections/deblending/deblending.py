@@ -502,7 +502,9 @@ def deblend_sofia_detections(cfg, runtime_ctx=None):
     cfg (Config): The configuration object.
     
     """
-    print_log(cfg,f"Checking the sources in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
+    print_log(cfg,f"Checking the sources in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}",
+            case=['main','screen'])
+
 
  
     #load the original sofia table

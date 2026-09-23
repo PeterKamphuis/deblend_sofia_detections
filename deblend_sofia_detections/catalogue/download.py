@@ -23,6 +23,10 @@ import warnings
 import numpy as np
 import pickle
 import time
+import random
+import itertools
+from threading import Lock, get_ident
+from contextlib import contextmanager
 
 
 class _NullGate:
@@ -34,6 +38,41 @@ class _NullGate:
 
 
 _NULL_GATE = _NullGate()
+_QUERY_RUN_COUNTER = itertools.count(1)
+_GATE_COUNTER_LOCK = Lock()
+_ACTIVE_GATE_RUNS = 0
+_PEAK_GATE_RUNS = 0
+
+
+@contextmanager
+def _tracked_gate(cfg, service_label, run_id, internet_query_gate):
+    global _ACTIVE_GATE_RUNS, _PEAK_GATE_RUNS
+    thread_id = get_ident()
+    print_log(
+        cfg,
+        f'{service_label} run {run_id}: waiting for internet gate on thread {thread_id}.',
+        case=['verbose','screen'])
+    with internet_query_gate:
+        with _GATE_COUNTER_LOCK:
+            _ACTIVE_GATE_RUNS += 1
+            if _ACTIVE_GATE_RUNS > _PEAK_GATE_RUNS:
+                _PEAK_GATE_RUNS = _ACTIVE_GATE_RUNS
+            active_now = _ACTIVE_GATE_RUNS
+            peak_now = _PEAK_GATE_RUNS
+        print_log(
+            cfg,
+            f'{service_label} run {run_id}: acquired internet gate on thread {thread_id}. active={active_now}, peak={peak_now}',
+            case=['verbose','screen'])
+        try:
+            yield
+        finally:
+            with _GATE_COUNTER_LOCK:
+                _ACTIVE_GATE_RUNS -= 1
+                active_now = _ACTIVE_GATE_RUNS
+            print_log(
+                cfg,
+                f'{service_label} run {run_id}: released internet gate on thread {thread_id}. active={active_now}',
+                case=['verbose','screen'])
 
 
 def _format_duration(seconds):
@@ -68,27 +107,42 @@ def _build_chunk_subcoords(sky_coords, n_chunks, chunk_size):
     return subcoords
 
 
-def _query_ned_with_retries(cfg, Ned, query_errors, coords, query_size):
+def _query_ned_with_retries(cfg, Ned, query_errors, coords, query_size, chunk_idx):
     table = None
-    for attempt in range(3):
+    max_attempts = 4
+    for attempt in range(max_attempts):
         try:
             table = Ned.query_region(coords,
                 radius=np.sqrt(2.0*(query_size/2.)**2), equinox='J2000.0')
             break
         except query_errors as e:
-            print_log(cfg, f'NED query failed on attempt {attempt + 1}/3: {e}', case=['verbose','screen'])
-            if attempt < 2:
-                time.sleep(1.)
+            run_id = None
+            if chunk_idx is not None and len(chunk_idx) >= 3:
+                run_id = chunk_idx[2]
+            run_str = f' run {run_id}' if run_id is not None else ''
+            print_log(cfg,
+                f'NED query failed on attempt {attempt + 1}/{max_attempts}{run_str} on chunk {chunk_idx[0]}/{chunk_idx[1]}: {e}',
+                case=['verbose','screen'])
+            if attempt < (max_attempts - 1):
+                # NED occasionally returns transient malformed responses; backoff helps.
+                backoff = min(30.0, 1.1 ** np.sqrt(attempt))
+                jitter = random.uniform(0.0, 1.75)
+                time.sleep(backoff + jitter)
+        except Exception as e:
+            print_log(cfg,
+                f'NED query failed With the error: {e}',
+                case=['verbose','screen'])
+            exit(1)
     return table
 
 
-def _query_ned_chunk_timed(cfg, Ned, query_errors, sub_coords, chunk_size):
+def _query_ned_chunk_timed(cfg, Ned, query_errors, sub_coords, chunk_size,chunk_idx):
     chunk_started_at = time.time()
-    sub_table = _query_ned_with_retries(cfg, Ned, query_errors, sub_coords, chunk_size)
+    sub_table = _query_ned_with_retries(cfg, Ned, query_errors, sub_coords, chunk_size, chunk_idx)
     return sub_table, (time.time() - chunk_started_at)
 
 
-def _query_simbad_with_retries(cfg, Simbad, query_errors, coords, query_size):
+def _query_simbad_with_retries(cfg, Simbad, query_errors, coords, query_size, chunk_idx=None):
     table = None
     for attempt in range(3):
         try:
@@ -103,27 +157,30 @@ def _query_simbad_with_retries(cfg, Simbad, query_errors, coords, query_size):
     return table
 
 
-def _query_simbad_chunk_timed(cfg, Simbad, query_errors, sub_coords, chunk_size):
+def _query_simbad_chunk_timed(cfg, Simbad, query_errors, sub_coords, chunk_size, chunk_idx=None):
     chunk_started_at = time.time()
-    sub_table = _query_simbad_with_retries(cfg, Simbad, query_errors, sub_coords, chunk_size)
+    sub_table = _query_simbad_with_retries(cfg, Simbad, query_errors, sub_coords, chunk_size, chunk_idx=chunk_idx)
     return sub_table, (time.time() - chunk_started_at)
 
 
-def _query_chunk_timed(worker_fn, worker_args, sub_coords, chunk_size):
+def _query_chunk_timed(worker_fn, worker_args, sub_coords, chunk_size, chunk_idx):
     chunk_started_at = time.time()
-    sub_table = worker_fn(*worker_args, sub_coords, chunk_size)
+    sub_table = worker_fn(*worker_args, sub_coords, chunk_size, chunk_idx=chunk_idx)
     return sub_table, (time.time() - chunk_started_at)
 
 
 def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn,
     worker_args, service_label, internet_query_gate=_NULL_GATE):
-    with internet_query_gate:
+    print_log(cfg,f'Starting {service_label} query with run ID {run_id}', case=['verbose','screen'])
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg, service_label, run_id, internet_query_gate):
         if size_quantity <= max_chunk_size:
-            return worker_fn(*worker_args, sky_coords, size_quantity)
+            return worker_fn(*worker_args, sky_coords, size_quantity, chunk_idx=(1, 1, run_id))
 
         n_chunks = int(np.ceil((size_quantity/max_chunk_size).decompose().value))
         chunk_size = size_quantity / n_chunks
         chunk_tables = []
+        failed_subcoords = []
         total_chunks = n_chunks**2
         non_empty_chunk_count = 0
         empty_chunk_count = 0
@@ -142,10 +199,13 @@ def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn
 
         if ncpu == 1:
             # Run serially to avoid spawning worker threads for services that are not thread-safe.
-            for sub_coord in subcoords:
-                sub_table, chunk_elapsed = _query_chunk_timed(worker_fn, worker_args, sub_coord, chunk_size)
+            for chunk_no, sub_coord in enumerate(subcoords, start=1):
+                sub_table, chunk_elapsed = _query_chunk_timed(
+                    worker_fn, worker_args, sub_coord, chunk_size,
+                    chunk_idx=(chunk_no, total_chunks, run_id))
                 if sub_table is None:
                     failed_chunk_count += 1
+                    failed_subcoords.append((sub_coord, chunk_no))
                 else:
                     if check_table_length(sub_table) > 0:
                         non_empty_chunk_count += 1
@@ -167,14 +227,19 @@ def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn
                     end='', flush=True)
         else:
             with ThreadPoolExecutor(max_workers=ncpu) as executor:
-                futures = [
-                    executor.submit(_query_chunk_timed, worker_fn, worker_args, sub_coord, chunk_size)
-                    for sub_coord in subcoords
-                ]
-                for future in as_completed(futures):
+                future_to_coord = {
+                    executor.submit(
+                        _query_chunk_timed, worker_fn, worker_args, sub_coord, chunk_size,
+                        (chunk_no, total_chunks, run_id)
+                    ): (sub_coord, chunk_no)
+                    for chunk_no, sub_coord in enumerate(subcoords, start=1)
+                }
+                for future in as_completed(future_to_coord):
+                    sub_coord, chunk_no = future_to_coord[future]
                     sub_table, chunk_elapsed = future.result()
                     if sub_table is None:
                         failed_chunk_count += 1
+                        failed_subcoords.append((sub_coord, chunk_no))
                     else:
                         if check_table_length(sub_table) > 0:
                             non_empty_chunk_count += 1
@@ -199,6 +264,31 @@ def _run_chunked_query(cfg, sky_coords, size_quantity, max_chunk_size, worker_fn
         print_log(cfg,
             f'{service_label} chunk summary: total={total_chunks}, non_empty={non_empty_chunk_count}, empty={empty_chunk_count}, failed={failed_chunk_count}',
             case=['verbose','screen'])
+
+        if failed_chunk_count > 0 and len(failed_subcoords) > 0:
+            print_log(cfg,
+                f'{service_label}: retrying {failed_chunk_count} failed chunks serially for recovery.',
+                case=['verbose','screen'])
+            recovered = 0
+            still_failed = []
+            for sub_coord, chunk_no in failed_subcoords:
+                sub_table, _ = _query_chunk_timed(
+                    worker_fn, worker_args, sub_coord, chunk_size,
+                    chunk_idx=(chunk_no, total_chunks, run_id))
+                if sub_table is None:
+                    still_failed.append((sub_coord, chunk_no))
+                else:
+                    recovered += 1
+                    if check_table_length(sub_table) > 0:
+                        non_empty_chunk_count += 1
+                        chunk_tables.append(sub_table)
+                    else:
+                        empty_chunk_count += 1
+
+            failed_chunk_count = len(still_failed)
+            print_log(cfg,
+                f'{service_label}: serial recovery recovered {recovered} chunk(s); remaining failed={failed_chunk_count}.',
+                case=['verbose','screen'])
 
         if failed_chunk_count > 0:
             raise RuntimeError(
@@ -226,7 +316,7 @@ def creating_full_FOV_optical(cfg, runtime_ctx=None):
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
    
-    print_log(cfg, f'Quering the Sky Survey', case=['verbose'])
+    print_log(cfg, f'Quering the Sky Survey', case=['verbose','screen'])
     cube_ext = cfg.internal.cube_ext
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -257,8 +347,10 @@ def creating_full_FOV_optical(cfg, runtime_ctx=None):
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''', case=['verbose'])
-    SkyView.clear_cache()
-    with internet_query_gate:
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg,'SkyView', run_id, internet_query_gate):
+        if cfg.input.clear_internet_cache:
+            SkyView.clear_cache()
         sky_view_list = SkyView.get_image_list(position=obj_coords,
                                    radius = size_quantity,
                                    coordinates = "J2000",
@@ -271,7 +363,7 @@ pixels: {size_pixels},''', case=['verbose'])
  
         print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
 {sky_view_list}
-                ''', case=['verbose'])
+''', case=['verbose'])
         for path in sky_view_list:
             print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
 This can take a while.''', case=['verbose'])
@@ -329,7 +421,8 @@ def download_gaia_table(cfg,runtime_ctx=None):
                 print_log(cfg,f"Found {len(gaia_table_sub)} Gaia sources in the sub-region. (total so far: {len(gaia_table)})",
                           case=['verbose','screen'])
         '''
-        with internet_query_gate:
+        run_id = next(_QUERY_RUN_COUNTER)
+        with _tracked_gate(cfg,'Gaia', run_id, internet_query_gate):
             gaia_table = Gaia.query_object_async(sky_coords, width=size_quantity*1.2, height=size_quantity*1.2)
         print_log(cfg,f"Found {len(gaia_table)} Gaia sources in the image area. Sorting them"
             ,case=['debug'])
@@ -364,8 +457,9 @@ def download_ned_table(cfg, runtime_ctx=None):
         sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying NED for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.ipac.ned import Ned
-        Ned.TIMEOUT = 3600
-        Ned.clear_cache()
+        Ned.TIMEOUT = 600
+        if cfg.input.clear_internet_cache:
+            Ned.clear_cache()
         max_chunk_size = 10.0 * u.arcmin
         internet_table = None
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
@@ -375,10 +469,11 @@ def download_ned_table(cfg, runtime_ctx=None):
             internet_query_gate=internet_query_gate)
 
         if internet_table is not None:
-            print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', case=['screen'])
-        if internet_table is None:
+            print_log(cfg, f'NED query completed with {check_table_length(internet_table)} results', 
+                case=['screen','verbose'])
+        else:
             print_log(cfg, 'NED returned an invalid or temporary response; continuing without NED counterpart table.',
-                case=['verbose'])
+                case=['verbose','screen'])
             return
        
         # as astropy is the dumbest project ever they can not be consistant so 
@@ -431,8 +526,9 @@ def download_simbad_table(cfg, runtime_ctx=None):
         sky_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg)
         print_log(cfg,f"Querying Simbad for sources in the image area, this may take some time...",case=['screen'])  
         from astroquery.simbad import Simbad
-        Simbad.TIMEOUT = 3600
-        Simbad.clear_cache()
+        Simbad.TIMEOUT = 600
+        if cfg.input.clear_internet_cache:
+            Simbad.clear_cache()
         internet_table = None
         max_chunk_size = 150.0 * u.arcmin
         query_errors = (ExpatError, ValueError, ConnectionError, TimeoutError, OSError)
