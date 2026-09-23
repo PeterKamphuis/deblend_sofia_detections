@@ -93,9 +93,9 @@ And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} t
         if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec):
             search_table = QTable() 
     elif search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
-       search_table['Velocity Diff'][0] > sysrange:
+       (search_table['Velocity Diff'][0] > sysrange and spectroscopic):
        search_table = QTable()
-   
+
     return search_table
 
 

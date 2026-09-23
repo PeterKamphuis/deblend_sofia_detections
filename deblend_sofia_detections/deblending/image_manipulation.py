@@ -291,7 +291,7 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
         xcen = all_xcens[loop_idx]
         ycen = all_ycens[loop_idx]
 
-        sma = 10.* pixel_scale.to(u.arcsec)
+        sma = 3.* pixel_scale.to(u.arcsec)
         for size in maj_sizes:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):

@@ -126,8 +126,13 @@ def check_single_cube_input(cfg):
             cube_ext = os.path.splitext(os.path.splitext(cfg.sofia.original_data_cube)[0])[1]+cube_ext
 
         cfg.internal.cube_ext = cube_ext
+        
         if cfg.sofia.original_mask == '':
             cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask{cube_ext}'
+        elif os.path.split(cfg.sofia.original_mask)[0] != '':
+            # in case the user provides an absolute path
+            cfg.sofia.original_mask = os.path.split(cfg.sofia.original_mask)[1]
+
         if not os.path.isfile(join_path(cfg.sofia.directory,cfg.sofia.original_mask)):
             raise InputError(f'''The mask file {cfg.sofia.original_mask} does not exist in the directory {cfg.sofia.directory}. Please provide a correct mask file.''')
     # As we have no way to reproduce the mask in this case we do not want to modify it.
