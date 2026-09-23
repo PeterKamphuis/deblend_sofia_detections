@@ -250,7 +250,7 @@ def check_true_different(cfg,segments,header):
 
 def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_header= None,
         base_dir = './',source_id = 'unknown',mask =None):
-    """If cube is None we do not deplend on 3D 
+    """If cube is None we do not deblend on 3D 
     if mom0 is None we do not deblend on 2D
     """
    
@@ -555,7 +555,7 @@ def deblend_sofia_detections(cfg, runtime_ctx=None):
 def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     """Detect sources in the optical image to use as markers for the watershed algorithm."""
     optical_image = open_fits_file(cfg.internal.cleaned_optical_background)
-    threshold_smooth = detect_threshold(optical_image[0].data, nsigma=3,background= 0.0)
+    threshold_smooth = detect_threshold(optical_image[0].data, n_sigma=3,background= 0.0)
     
     print_log(cfg,f"Using a threshold of  {np.mean(threshold_smooth)} for source detection."
         , case=['verbose'])
@@ -583,8 +583,8 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     segm_deblend = np.zeros(optical_image[0].data.shape)
     if not cfg.input.manual_markers_only:
         while np.max(segm_deblend) < 2 and npixels > 20.:
-            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels=npixels,mask=inv_mask)
-            if segm_deblend is None:
+            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, n_pixels=npixels,mask=inv_mask)
+            if segm_deblend is None or np.max(segm_deblend) < 2:
                 print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
                 segm_deblend = np.zeros(optical_image[0].data.shape)
             npixels -= 10
@@ -752,7 +752,7 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         int(3.*cfg.internal.optical_kernel_fwhm) % 2 == 0 else \
         int(3.*cfg.internal.optical_kernel_fwhm)
     ## feel free to adjust the following parameters for better source detection. ##
-    #threshold = detect_threshold(optical_image, nsigma=5,background= 0.0)
+    #threshold = detect_threshold(optical_image, n_sigma=5,background= 0.0)
     print_log(cfg,f"Using a FWHM of {cfg.internal.optical_kernel_fwhm} pixels for the Gaussian kernel and a box size of {boxin} pixels for smoothing the optical image.", case=['verbose'])
     kernel = make_2dgaussian_kernel(cfg.internal.optical_kernel_fwhm, size=boxin)
     print_log(cfg,f"Smoothing the image", case=['verbose'])
@@ -1060,8 +1060,8 @@ We start the watershed_deblending for the cube {cube_name}.''', case=['verbose',
     if 'SOF_DEB' in cube[0].header:
         if cube[0].header['SOF_DEB'] == True:
             print_log(cfg, f'''The cube {cube_name} has already been deblended. 
-We will not deblend it again as this lead to different and unreliable results.''', case=['verbose','screen'])
-            return max_source_id
+We will not deblend it again as this leads to different and unreliable results.''', case=['verbose','screen'])
+            return max_source_id, None
 
 
     results = { 'optical_moment0': [False, 0],

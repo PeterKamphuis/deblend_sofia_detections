@@ -53,8 +53,12 @@ def check_parameters(table,variables=None,no_conversion=False):
                     # replace the freq with v_sofia in the new name
                     new_column = check.replace('freq','v_sofia')
                  
-                    table[new_column] = [(C.to(u.km/u.s)*(1-x.to(u.Hz)/rest_HI).decompose().value).value for x in table[check]]*u.km/u.s
+                    # table[new_column] = [(C.to(u.km/u.s)*(1-x.to(u.Hz)/rest_HI).decompose().value).value for x in table[check]]*u.km/u.s
                     #table[new_column].unit = u.km/u.s
+
+                    # use optical convention for velocity
+                    table[new_column] = [(C.to(u.km/u.s)*((rest_HI/x.to(u.Hz) - 1).decompose().value)).value for x in table[check]]*u.km/u.s
+
                     velocity = new_column
                     trig = False
                     break
@@ -119,9 +123,10 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
             prefix = 'sofia_'
             break
     ids = [x for x in sources[prefix+'id']]  
+    v_min = 10  # HI velocity resolution
     weights = [header_info['pixelsize'].to(u.deg).value,
-            header_info['channel_width'].to(u.km/u.s).value] if\
-        header_info else [1., 1.]
+            header_info['channel_width'].to(u.km/u.s).value * v_min] if\
+        header_info else [1., v_min]
     source_row = sources[ids.index(source_id)]
     source_coords = (source_row[f'{prefix}ra'], source_row[f'{prefix}dec'],source_row[f'{prefix}v_sofia'])
     min_distance = float('inf')
@@ -130,7 +135,8 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
     for row in sources:
         if row[f'{prefix}id'] != source_id:
             row_coords = (row[f'{prefix}ra'], row[f'{prefix}dec'], row[f'{prefix}v_sofia'])
-            distance = np.sqrt(((source_coords[0].to(u.deg).value - row_coords[0].to(u.deg).value)/weights[0])**2 
+            distance = np.sqrt(((source_coords[0].to(u.deg).value - row_coords[0].to(u.deg).value)/weights[0]\
+                                 * np.cos(np.deg2rad(source_coords[1].to(u.deg).value)))**2 
                 + ((source_coords[1].to(u.deg).value - row_coords[1].to(u.deg).value)/weights[0])**2 
                 + ((source_coords[2].to(u.km/u.s).value - row_coords[2].to(u.km/u.s).value)/weights[1])**2)
             if distance < min_distance:
@@ -347,12 +353,12 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
 
 def obtain_sofia_id(base_name, cube_name):
     tmp,cube_file = os.path.split(cube_name)
-    split_main = cube_file.split(base_name)
-    parts = split_main[1].split('_')
-    id  = parts[1]
+    
     try:
-        int(id)
-    except ValueError:
+        split_main = cube_file.split(base_name)
+        parts = split_main[1].split('_')
+        id  = int(parts[1])
+    except (ValueError, IndexError):
         id = '1'
     return id,cube_file
 
@@ -469,6 +475,7 @@ def rerun_sofia(cfg):
     write_sofia(sofia_temp,f'{cfg.sofia.parameter_path}/deblend_sofia.par')
     execute_sofia(cfg,run_directory=cfg.sofia.parameter_path,
         sofia_parameter_file='deblend_sofia.par')
+    os.remove(f'{cfg.sofia.parameter_path}/deblend_sofia.par')
     #mark the new cubelets as deblended
     mark_as_deblended(cfg)
     

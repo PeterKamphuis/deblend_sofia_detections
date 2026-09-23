@@ -310,7 +310,7 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
                         sma = src_table[size][i].to(u.arcsec)/2.
                         break
         if sma is None:
-            sma= 10.*u.arcsec
+            sma= 3. * pixel_scale.to(u.arcsec)
         
         smb = None
         for size in semi_minor_size:
