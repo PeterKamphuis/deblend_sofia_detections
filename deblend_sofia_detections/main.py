@@ -36,16 +36,16 @@ def main_trace_with_input(argv):
 
 def main_with_input(argv,runtime_ctx=None):
     cfg = setup_config(argv)
-    if runtime_ctx is None and cfg.advanced.limit_concurrent_internet != 0:
+    if runtime_ctx is None and cfg.input.limit_concurrent_internet != 0:
         runtime_ctx = {'internet_query_gate': BoundedSemaphore(
-            cfg.advanced.limit_concurrent_internet)}
+            cfg.input.limit_concurrent_internet)}
     deblend_sofia_detections(cfg, runtime_ctx=runtime_ctx)
    
 def single_main_with_input(argv,runtime_ctx=None):
     cfg = setup_config(argv,single_cube=True)
-    if runtime_ctx is None and cfg.advanced.limit_concurrent_internet != 0:
+    if runtime_ctx is None and cfg.input.limit_concurrent_internet != 0:
         runtime_ctx = {'internet_query_gate': BoundedSemaphore(
-            cfg.advanced.limit_concurrent_internet)}
+            cfg.input.limit_concurrent_internet)}
     deblend_single_detection(cfg, runtime_ctx=runtime_ctx)
 
 
@@ -61,7 +61,7 @@ def main():
     '''Set up the configuration as input by the user'''
     cfg = setup_config(argv)
     runtime_ctx = None
-    if cfg.advanced.limit_concurrent_internet != 0:
+    if cfg.input.limit_concurrent_internet != 0:
         runtime_ctx = {'internet_query_gate': BoundedSemaphore(cfg.advanced.limit_concurrent_internet)}
     deblend_sofia_detections(cfg, runtime_ctx=runtime_ctx)
 
@@ -71,7 +71,7 @@ def single_main():
     '''Set up the configuration as input by the user'''
     cfg = setup_config(argv,single_cube=True)
     runtime_ctx = None
-    if cfg.advanced.limit_concurrent_internet != 0:
+    if cfg.input.limit_concurrent_internet != 0:
         runtime_ctx = {'internet_query_gate': BoundedSemaphore(cfg.advanced.limit_concurrent_internet)}
     deblend_single_detection(cfg, runtime_ctx=runtime_ctx)
     # for some dumb reason pools have to be called from main

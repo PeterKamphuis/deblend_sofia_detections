@@ -310,9 +310,10 @@ def sort_by_name(table):
 
 '''Sort the table by distance'''
 def sort_on_distance(cfg, table_in, coordinates, vsys, 
-        header_info = None, weights = [1.,1.],spectroscopic=True):
+        header_info = None, spectroscopic=True):
     # this stupid table is not ordered so get names, types ra and dec 
     # and sort on distance
+
     if vsys is None and spectroscopic:
         print_log(cfg,
             f'No systemic velocity found for {table_in["Object Name"][0]}. This is a logical error',
@@ -332,10 +333,11 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
     table = copy.deepcopy(table_in)
     if not only_sort:
         print_log(cfg,f'Before sorting: {table_in[0]}',case=['verbose'])
-        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])      
-        if np.all(np.array(weights) == 1.) and not header_info is None:
-            weights = [header_info['pixelsize'], 
-                       header_info['channel_width']]
+        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])  
+        weights = [(cfg.internal.weights[0]*u.arcsec).to(u.deg), cfg.internal.weights[1]*u.km/u.s]
+        #if np.all(np.array(weights) == 1.) and not header_info is None:
+        #    weights = [header_info['pixelsize'], 
+        #               header_info['channel_width']]
             
         print_log(cfg,f'Using weights {weights}',case=['debug'])
         if spectroscopic:

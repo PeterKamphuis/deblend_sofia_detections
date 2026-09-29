@@ -1,5 +1,6 @@
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical,\
-    download_gaia_table,download_ned_table,download_simbad_table
+    download_gaia_table,download_internet_table,_tracked_gate,_NULL_GATE,\
+    _QUERY_RUN_COUNTER
 from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
     mask_source_from_table,add_to_original
@@ -462,7 +463,13 @@ def deblend_single_detection(cfg, runtime_ctx=None):
     print_log(cfg,f"Checking the source in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
    
     #obtain the ancillary data
-    obtain_ancillary_data(cfg, runtime_ctx=runtime_ctx)
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
+    else:
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg, 'All_Downloads', run_id, internet_query_gate):
+        obtain_ancillary_data(cfg)
     mask = open_fits_file(f'{cfg.sofia.directory}/{cfg.sofia.original_mask}')
     max_source_id_original = np.max(mask[0].data)
     max_source_id = copy.deepcopy(max_source_id_original)
@@ -510,9 +517,16 @@ def deblend_sofia_detections(cfg, runtime_ctx=None):
     #load the original sofia table
     sources,table_name = read_sofia_table(cfg,
         no_conversion = True)
-    
     #obtain the ancillary data
-    obtain_ancillary_data(cfg, runtime_ctx=runtime_ctx)
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
+    else:
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg, 'All_Downloads', run_id, internet_query_gate):
+        obtain_ancillary_data(cfg,sources=sources)
+    #obtain the ancillary data
+   
 
     cubelets_dir = f'{cfg.sofia.directory}/{cfg.sofia.basename}_cubelets/'
     max_source_id_original = np.max([int(x) for x in sources['id']])
@@ -555,7 +569,8 @@ def deblend_sofia_detections(cfg, runtime_ctx=None):
 def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     """Detect sources in the optical image to use as markers for the watershed algorithm."""
     optical_image = open_fits_file(cfg.internal.cleaned_optical_background)
-    threshold_smooth = detect_threshold(optical_image[0].data, n_sigma=3,background= 0.0)
+    # do not name n_sigma/nsigma as its name changes in v3.0.0 of photutils
+    threshold_smooth = detect_threshold(optical_image[0].data, 3,background= 0.0)
     
     print_log(cfg,f"Using a threshold of  {np.mean(threshold_smooth)} for source detection."
         , case=['verbose'])
@@ -583,7 +598,8 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     segm_deblend = np.zeros(optical_image[0].data.shape)
     if not cfg.input.manual_markers_only:
         while np.max(segm_deblend) < 2 and npixels > 20.:
-            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, n_pixels=npixels,mask=inv_mask)
+            # do not name n_pixels/npixels as it changes name in photutils 3.0.0
+            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels,mask=inv_mask)
             if segm_deblend is None or np.max(segm_deblend) < 2:
                 print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
                 segm_deblend = np.zeros(optical_image[0].data.shape)
@@ -605,11 +621,11 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
 
     return masked_deb,optical_image[0].header,hi_mask
-def obtain_ancillary_data(cfg, runtime_ctx=None):
+def obtain_ancillary_data(cfg,sources=None):
     #get an optical background image
     if not os.path.exists(f'{cfg.internal.optical_background}'):
         print_log(cfg,f"Creating the full FOV optical image for {cfg.sofia.original_data_cube}.",case= ['verbose'])
-        creating_full_FOV_optical(cfg, runtime_ctx=runtime_ctx)
+        creating_full_FOV_optical(cfg)
     
 
     #download catalogues if requested.
@@ -622,17 +638,17 @@ We will still use any cached tables if available in {cfg.directories.ancillary_d
         if cfg.input.use_optical_deblending:
             #Download the gaia table for the full FOV optical image
             try:
-                download_gaia_table(cfg, runtime_ctx=runtime_ctx)  
+                download_internet_table(cfg,archive= 'GAIA')  
             except Exception as e:
                 print_log(cfg, f"Failed to download Gaia table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['NED','ALL']:
             try:
-                download_ned_table(cfg, runtime_ctx=runtime_ctx)
+                download_internet_table(cfg,sources= sources, archive='NED')
             except Exception as e:
                 print_log(cfg, f"Failed to download NED table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['SIMBAD','ALL']:
             try:
-                download_simbad_table(cfg, runtime_ctx=runtime_ctx)
+                download_internet_table(cfg,sources= sources, archive='SIMBAD')
             except Exception as e:
                 print_log(cfg, f"Failed to download SIMBAD table: {e}", case=['verbose','screen'])  
               
@@ -752,7 +768,6 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         int(3.*cfg.internal.optical_kernel_fwhm) % 2 == 0 else \
         int(3.*cfg.internal.optical_kernel_fwhm)
     ## feel free to adjust the following parameters for better source detection. ##
-    #threshold = detect_threshold(optical_image, n_sigma=5,background= 0.0)
     print_log(cfg,f"Using a FWHM of {cfg.internal.optical_kernel_fwhm} pixels for the Gaussian kernel and a box size of {boxin} pixels for smoothing the optical image.", case=['verbose'])
     kernel = make_2dgaussian_kernel(cfg.internal.optical_kernel_fwhm, size=boxin)
     print_log(cfg,f"Smoothing the image", case=['verbose'])
@@ -1043,7 +1058,7 @@ def watershed_deblending(cfg_in, cube_name = None,
             if os.path.isfile(file_path):
                 if file_path == cfg.internal.cleaned_optical_background:
                     if cfg.input.clear_internet_cache and optical_deblending:
-                        print_log(cfg, f"Removing the cleaned optical background image {file_path} because we are clearing the cache and want to use optical deblending.", case=['verbose','screen'])
+                        print_log(cfg, f"Removing the cleaned optical background image {file_path} because we are clearing the cache and want to use optical deblending.", case=['verbose'])
                         os.remove(file_path)
                 else:
                     os.remove(file_path)
@@ -1073,7 +1088,7 @@ We will not deblend it again as this leads to different and unreliable results.'
         # We first prepare the optical image
      
         print_log(cfg, f'Preparing the optical image for the cube {cfg.internal.cleaned_optical_background}. \n', 
-case=['verbose','screen'])
+case=['verbose'])
         if not os.path.exists(cfg.internal.cleaned_optical_background):
             prepare_background_optical_image(cfg,cube,source_id=sofia_id,outdir=outdir)
        
@@ -1084,19 +1099,19 @@ case=['verbose','screen'])
         # optical image because it is not useful and can lead to oversegmentation
         if len(np.unique(optical_markers.data)) - 1 <= 1:
             print_log(cfg, f"We found {len(np.unique(optical_markers.data)) - 1} optical sources in the cube {cube_name} so we will not use the optical deblending results for the peak deblending.", 
-                case=['verbose','screen'])
+                case=['verbose'])
             # 1000 indicates 1 or less optical sources found so we shouldn't deblend
             # We require optical sources because if we simply deblend on the cube we can split anything
             results['optical_moment0'] = [False, 1000]
             results['optical_cube'] = [False, 1000]
         if moment0_deblending:          
             print_log(cfg, f'Running 2D deblending based on an optical image for mom0 = {mom0_name} \n', 
-                case=['verbose','screen'])
+                case=['verbose'])
             results['optical_moment0'] = deblend_on_optical(cfg,mom0,optical_markers,
                     outdir=outdir, source_id=sofia_id, optical_header=markers_header)
         if cube_deblending:
             print_log(cfg, f'Running 3D  deblending based on an optical image for cube {cube_name}. \n', 
-                case=['verbose','screen'])
+                case=['verbose'])
             cube_smooth = copy.deepcopy(cube)
             cube_smooth[0].data = freq_smooth(cube[0].data, smooth=4.0)
             results['optical_cube'] = deblend_on_optical(cfg,cube_smooth,optical_markers,
@@ -1133,11 +1148,11 @@ case=['verbose','screen'])
   
    
     print_log(cfg, f'''Final mask name: {final_mask_name}
-Which is based on the following deblending results: {results}''',case=['verbose','screen'])
+Which is based on the following deblending results: {results}''',case=['verbose'])
    
     sources_table = None
     if not final_mask_name is None:  
-        print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose','screen'])
+        print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose'])
         stil_split,sources_table = split_sources(cfg,cube_name, final_mask_name, 
             outdir=outdir,catalogue=cfg.logging.save_counterpart_table)  
         # skip the background

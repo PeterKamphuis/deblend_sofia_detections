@@ -47,6 +47,7 @@ class Input:
     # When running multiple deblend processes, 
     # this could clear a cache while being used leading to errors.
     counterpart_region: str = 'Ellipse' 
+    gaia_credentials: List[str] = field(default_factory=lambda: ['NONE','NONE'])
 
 
 @dataclass
@@ -101,6 +102,7 @@ class Internal:
     ned_table: str = 'none'
     simbad_table: str = 'none'
     cube_ext: str = '.fits'
+    weights: List[float] = field(default_factory=lambda: [4., 10.]) #weights in arcsec, km/s
     
 @dataclass
 class defaults:

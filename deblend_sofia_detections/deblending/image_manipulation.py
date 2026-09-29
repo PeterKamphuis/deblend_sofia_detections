@@ -159,11 +159,14 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     dec_range = [optical_wcs.wcs_pix2world(0, 0, 1)[1], optical_wcs.wcs_pix2world(w, h, 1)[1]]
    
     # exclude stars outside the image bounds
-    gaia_table = gaia_table[(gaia_table["ra"] >= ra_range[0]-0.1) & (gaia_table["ra"] <= ra_range[1]+0.1) &
-                            (gaia_table["dec"] >= dec_range[0]-0.1) & (gaia_table["dec"] <= dec_range[1]+0.1)]
+    gaia_table = gaia_table[(gaia_table["RA"] >= ra_range[0]-0.1) & (gaia_table["RA"] <= ra_range[1]+0.1) &
+                            (gaia_table["DEC"] >= dec_range[0]-0.1) & (gaia_table["DEC"] <= dec_range[1]+0.1)]
     gaia_table.sort('phot_rp_mean_mag')  # Sort by brightness (smaller magnitude is brighter)
-    gaia_table = gaia_table[0:int(len(gaia_table)*.5)]  # Limit to the upper half of the brightness distribution
-    star_coords = SkyCoord(ra=gaia_table["ra"], dec=gaia_table["dec"],
+    #if len(gaia_table) > 400:
+    #    gaia_table = gaia_table[0:int(len(gaia_table)*.5)]  # Limit to the upper half of the brightness distribution
+    #else:
+    #    gaia_table = gaia_table[0:200]  # Keep all stars if there are 400 or fewer
+    star_coords = SkyCoord(ra=gaia_table["RA"], dec=gaia_table["DEC"],
                             unit=(u.deg, u.deg), frame='fk5')
     
     x, y = optical_wcs.world_to_pixel(star_coords)
@@ -178,9 +181,11 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
             gaia_table["phot_rp_mean_mag"])**3 * radius_pixels  # Example scaling factor for radius
    
     individual_radius[individual_radius <radius_pixels] = radius_pixels
-
+    #for i in range(len(x)):
+    #    print(f"Star {i}: x={x[i]}, y={y[i]}, radius={individual_radius[i]} coordinates=({star_coords[i].ra.deg}, {star_coords[i].dec.deg}) mag = {gaia_table['phot_rp_mean_mag'][i]}")
+    #exit()
     # Mask stars
-    print_log(cfg,f"Masking {len(x)} stars in the optical image.",case=['verbose','screen'])
+    print_log(cfg,f"Masking {len(x)} stars in the optical image.",case=['verbose'])
    
     yy, xx = np.indices(optical_image.data.shape)
     
@@ -393,7 +398,7 @@ def split_sources(cfg_in,cube_name, mask,
     while not matched:
         # Run sofia
         print_log(cfg,f"Running SoFiA on {cube_name} with mask {mask} in {outdir}/Sofia_Output/sofia_input.par",
-            case=['verbose','screen'])
+            case=['verbose'])
         sofia_output = execute_sofia(cfg,run_directory=f'{outdir}/Sofia_Output/')
         if sofia_output != 'Success':
             raise RuntimeError(f"SoFiA execution failed for {cube_name} with mask {mask}. Please check the SoFiA output for errors.")
@@ -404,11 +409,11 @@ def split_sources(cfg_in,cube_name, mask,
             sofia_directory=f'{outdir}/Sofia_Output/',sofia_basename=basename,
             no_conversion=False) 
         print_log(cfg,f"Read the SoFiA output table from {outdir} the cube {name} with {len(sources_to_split)} sources.",
-            case=['verbose','screen'])
+            case=['verbose'])
         if sources_to_split is None:
             raise ValueError(f"SoFiA did not produce an output table for {cube_name}. Please check the SoFiA output for errors.")
         if len(sources_to_split) == 1:
-            print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose','screen'])
+            print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose'])
             matched = True
             break
 
@@ -435,7 +440,7 @@ def split_sources(cfg_in,cube_name, mask,
             print_log(cfg,f''' For source {source['sofia_id'][0]} with velocity {source['sofia_v_sofia'][0]} we find:
 Manual Object Name = {source['Manual_Object Name'][0]} and it is spectroscopic {source['Manual_spectroscopic'][0]}
 INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscopic {source['INTERNET_spectroscopic'][0]} with velocity {source['INTERNET_Velocity'][0]}
-''',case=['verbose','screen'])
+''',case=['verbose'])
 
             
             if source['Manual_Object Name'][0] in [x for x in counterparts] or \
@@ -453,11 +458,11 @@ INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscop
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
-                    ,case=['verbose','screen']) 
+                    ,case=['verbose']) 
             else:
                 counterparts[source_row['Name']] = source_row['sofia_id']
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has a counterpart in the catalogue. No replacement needed."
-                    ,case=['verbose','screen'])
+                    ,case=['verbose'])
         
             if source_row['Name'] == source_row['sofia_name']:
                 rep = closest_sofia_source(cfg,source_row['sofia_id'],sources_to_split,
@@ -484,18 +489,18 @@ INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscop
        
         #Checkin what we have
         print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
-            , case=['verbose','screen'])            
+            , case=['verbose'])            
         if len(id) == len(sources_to_split):
-            print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose', 'screen'])
+            print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose'])
             matched = True
         elif np.unique(maskin[0].data).size-1 == 1:
-            print_log(cfg,f"Only one source found in the mask {mask}. No deblending needed.", case=['verbose', 'screen'])
+            print_log(cfg,f"Only one source found in the mask {mask}. No deblending needed.", case=['verbose'])
             matched = True
         else:
             print_log(cfg,f'''The mask has the following source {np.unique(maskin[0].data)}
-the counterparts map {counterparts}''', case=['verbose','screen'])
+the counterparts map {counterparts}''', case=['verbose'])
             for pair in replace_id:
-                print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose','screen'])
+                print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose'])
                 maskin[0].data[maskin[0].data == pair[0]] = pair[1]
             write_fits_file(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
                  overwrite=True,output_verify='ignore')

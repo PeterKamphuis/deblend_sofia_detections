@@ -1,9 +1,12 @@
 from deblend_sofia_detections.config.config import defaults
 from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.logging import print_log,start_new_log
+from deblend_sofia_detections.support.support_functions import get_fits_header
 from deblend_sofia_detections.support.system_functions import join_path,create_directory
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
+
 from omegaconf import OmegaConf,MISSING
+from astropy import units as u
 
 import os
 import psutil
@@ -90,6 +93,7 @@ configuration_file = ''')
         and cfg.input.manual_input_tables[0] is None:
         print(f"You requested manual markers only but have not provided a table.")
         raise InputError(f"You requested manual markers only but have not provided a table.")
+   
     return cfg
 
 def check_debug_functions(cfg):

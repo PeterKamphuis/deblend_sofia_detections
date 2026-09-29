@@ -123,10 +123,8 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
             prefix = 'sofia_'
             break
     ids = [x for x in sources[prefix+'id']]  
-    v_min = 10  # HI velocity resolution
-    weights = [header_info['pixelsize'].to(u.deg).value,
-            header_info['channel_width'].to(u.km/u.s).value * v_min] if\
-        header_info else [1., v_min]
+    weights = [(cfg.internal.weights[0]*u.arcsec).to(u.deg).value, cfg.internal.weights[1]]
+  
     source_row = sources[ids.index(source_id)]
     source_coords = (source_row[f'{prefix}ra'], source_row[f'{prefix}dec'],source_row[f'{prefix}v_sofia'])
     min_distance = float('inf')
