@@ -541,8 +541,12 @@ def subtract_background(cfg,image,wcs):
     box_size = [boxin, boxin]  # box size for background estimation
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        background = Background2D(image, box_size)
-        new_image = image - background.background
+        try:
+            background = Background2D(image, box_size)
+        except Exception as e:
+            print_log(cfg,f"Background subtraction failed: {e}", case=['main'])
+            background = None
+        new_image = image - background.background if background is not None else image
     new_wcs = copy.deepcopy(wcs)
     close_variables(image,background,wcs)
     return new_image,new_wcs
