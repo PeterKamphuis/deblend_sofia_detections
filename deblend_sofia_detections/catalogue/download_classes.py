@@ -2,16 +2,31 @@
 import urllib.request
 from urllib.parse import urlencode
 from astropy import units as u
-from astroquery.gaia import Gaia
-from astropy.coordinates import SkyCoord
-from astropy.table import vstack
 from astroquery import log
 log.setLevel('WARN')
 
+
+from astropy.coordinates import SkyCoord
+from astropy.table import vstack
+
+
 import numpy as np
 import warnings
+import os
+import sys
+
+def stopPrint(func, *args, **kwargs):
+    with open(os.devnull,"w") as devNull:
+        original = sys.stdout
+        sys.stdout = devNull
+        func(*args, **kwargs)
+        sys.stdout = original 
+stopPrint(lambda: __import__('astroquery.gaia'))
+from astroquery.gaia import Gaia
+    
 class LW_GaiaQuery:
     def __init__(self,  credentials=['NONE','NONE']):
+      
         self.coords = "<RA DEC>"
         self.size = 1.*u.arcmin
         self.verbose = False

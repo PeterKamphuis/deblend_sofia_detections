@@ -126,9 +126,13 @@ def convertRADEC(cfg,RAin,DECin,invert=False, colon=False, verbose=False):
 
         for i in range(len(RA)):
             # first we split the numbers out
-            tmp = re.split(r"[a-z,:]+",xpos[i])
+            tmp = re.split(r"[a-z,:]'+",xpos[i])
+            if len(tmp) < 3:
+                tmp = xpos[i].split()
             RA[i]=(float(tmp[0])+((float(tmp[1])+(float(tmp[2])/60.))/60.))*15.
             tmp = re.split(r"[a-z,:'\"]+",ypos[i])
+            if len(tmp) < 3:
+                tmp = ypos[i].split()
             if float(tmp[0]) != 0.:
                 DEC[i]=float(np.absolute(float(tmp[0]))+((float(tmp[1])+\
                     (float(tmp[2])/60.))/60.))*float(tmp[0])/np.absolute(float(tmp[0]))

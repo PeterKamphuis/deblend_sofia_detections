@@ -69,14 +69,6 @@ def _tracked_gate(cfg, service_label, run_id, internet_query_gate):
                 f'{service_label} run {run_id}: released internet gate on thread {thread_id}. active={active_now}',
                 case=['verbose'])
 
-def _format_duration(seconds):
-    seconds = int(max(0, round(seconds)))
-    mins, secs = divmod(seconds, 60)
-    hours, mins = divmod(mins, 60)
-    if hours > 0:
-        return f"{hours:02d}:{mins:02d}:{secs:02d}"
-    return f"{mins:02d}:{secs:02d}"
-
 
 def _build_progress_bar(completed, total, width=30):
     if total <= 0:
