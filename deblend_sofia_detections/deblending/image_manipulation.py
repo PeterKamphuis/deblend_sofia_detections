@@ -210,8 +210,11 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     r_valid = r_arr[valid_mask]
     
 
-
-    print_log(cfg,f"Processing {len(x_valid)} valid stars out of {len(x_arr)} total stars",case=['verbose'])
+    if len(x_valid) == 0:
+        print_log(cfg,"No valid stars to process.",case=['verbose'])
+        return star_mask, True
+    else:
+        print_log(cfg,f"Processing {len(x_valid)} valid stars out of {len(x_arr)} total stars",case=['verbose'])
     
     # Process stars in chunks to avoid memory issues
     chunk_size = min(35, len(x_valid))  # Adjust based on available memory
