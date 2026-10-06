@@ -145,9 +145,21 @@ class LW_NedQuery:
 
         #with open(f"test_ned_Rad{self.radi.to(u.arcmin).value}.html", "w") as f:
         #    f.write(temp.read().decode('utf-8'))
-    
-       
         return table
+    
+    def query_object(self, name, verbose=None, maxrec=None, equinox=None, legacy=True):
+        self.url_addition = f'OverviewOfObject'
+        
+        self.payload["TARGET"] = name
+        if verbose is not None:
+            self.verbose = verbose
+        request = self.make_url()
+        temp = urllib.request.urlopen(request)
+        table = self.xml_to_table(temp)
+        if legacy:
+            table = self.rename_columns(table)
+        return table
+    
     def rename_columns(self, table):
         # Implement the logic to rename columns for legacy support
         column_names = table.colnames
@@ -185,6 +197,7 @@ class LW_NedQuery:
         votable_file = BytesIO(xml_data.read())
         table = votable.parse(votable_file).get_first_table().to_table()
         return table
+    
     def make_url(self):
         payload_url = f'{self.url}/{self.url_addition}?'
         for key, value in self.payload.items():
