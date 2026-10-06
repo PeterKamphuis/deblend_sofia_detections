@@ -236,7 +236,7 @@ WHERE ra BETWEEN 180 AND 180.2 AND dec BETWEEN 10.1 AND 10.3 ORDER BY
 phot_rp_mean_mag'''
     job = Gaia.launch_job(query,dump_to_file=False)
 
-
+'''
 def download_gaia_table(cfg,runtime_ctx=None):
     dgf_start = datetime.now()
     print_log(cfg, f'Starting Gaia table download at {dgf_start}', case=['verbose','screen'])
@@ -284,7 +284,7 @@ def download_gaia_table(cfg,runtime_ctx=None):
     dgf_end = datetime.now()
     print_log(cfg, f'Finished Gaia table download at {dgf_end}', case=['verbose','screen'])
     print_log(cfg, f'Total time taken: {dgf_end - dgf_start}', case=['verbose','screen'])
-
+'''
 def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED'):
     '''
     Download the internet table (e.g., NED) for the given sources.
@@ -422,8 +422,9 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         else:
             search_table = internet_table
         #select out the galaxies
+        print_log(cfg, f'Caching {archive.lower()} table to {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl', case=['verbose'])          
         with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','wb') as tmp:
-            pickle.dump(search_table,tmp) 
+             pickle.dump(search_table,tmp) 
         setattr(cfg.internal, f'{archive.lower()}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
     download_end = datetime.now()
     print_log(cfg, f'Finished {archive} table download at {download_end}', case=['verbose','screen'])
@@ -654,56 +655,56 @@ def run_chunked_query(cfg, sky_coord, size_in_arcmin, max_chunk_size, function_t
                 completed_chunks += 1
                 print_bar(run_type, completed_chunks, total_chunks, chunk_times, started_at)
         # flush the bar      
-        print()
-        print_log(cfg,
-            f'''Summary of table retrieval for {run_type}: 
+    print()
+    print_log(cfg,
+        f'''Summary of table retrieval for {run_type}: 
 total={total_chunks}, 
 non_empty={non_empty_chunk_count}, 
 empty={empty_chunk_count}, 
 failed={failed_chunk_count}''',case=['verbose'])
 
-        if failed_chunk_count > 0 and len(failed_subcoords) > 0:
-            print_log(cfg,
-                f'{service_label}: retrying {failed_chunk_count} failed chunks serially for recovery.',
-                case=['verbose','screen'])
-            recovered = 0
-            still_failed = []
-            for sub_coord, chunk_no in failed_subcoords:
-                sub_table, _ = run_timed_chunk(
-                    function_to_run, function_args, sub_coord, 
-                    chunk_id=(chunk_no, total_chunks))
-                if sub_table is None:
-                    still_failed.append((sub_coord, chunk_no))
-                else:
-                    recovered += 1
-                    if check_table_length(sub_table) > 0:
-                        non_empty_chunk_count += 1
-                        chunk_tables.append(sub_table)
-                    else:
-                        empty_chunk_count += 1
-
-            failed_chunk_count = len(still_failed)
-            print_log(cfg,
-f'{run_type}: serial recovery recovered {recovered} chunk(s); remaining failed={failed_chunk_count}.',
-                case=['verbose'])
-
-        if failed_chunk_count > 0:
-            raise RuntimeError(
-                f'{run_type} chunked query failed: {failed_chunk_count}/{total_chunks} chunks failed.')
-
-        if len(chunk_tables) == 0:
-            return None
-        if len(chunk_tables) == 1:
-            internet_table = chunk_tables[0]
-        else:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                internet_table = vstack(chunk_tables)
-
+    if failed_chunk_count > 0 and len(failed_subcoords) > 0:
         print_log(cfg,
-            f'{run_type} chunked query completed with {check_table_length(internet_table)} unfiltered results',
+            f'{service_label}: retrying {failed_chunk_count} failed chunks serially for recovery.',
+            case=['verbose','screen'])
+        recovered = 0
+        still_failed = []
+        for sub_coord, chunk_no in failed_subcoords:
+            sub_table, _ = run_timed_chunk(
+                function_to_run, function_args, sub_coord, 
+                chunk_id=(chunk_no, total_chunks))
+            if sub_table is None:
+                still_failed.append((sub_coord, chunk_no))
+            else:
+                recovered += 1
+                if check_table_length(sub_table) > 0:
+                    non_empty_chunk_count += 1
+                    chunk_tables.append(sub_table)
+                else:
+                    empty_chunk_count += 1
+
+        failed_chunk_count = len(still_failed)
+        print_log(cfg,
+        f'{run_type}: serial recovery recovered {recovered} chunk(s); remaining failed={failed_chunk_count}.',
             case=['verbose'])
-        return internet_table
+
+    if failed_chunk_count > 0:
+        raise RuntimeError(
+            f'{run_type} chunked query failed: {failed_chunk_count}/{total_chunks} chunks failed.')
+
+    if len(chunk_tables) == 0:
+        return None
+    if len(chunk_tables) == 1:
+        internet_table = chunk_tables[0]
+    else:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            internet_table = vstack(chunk_tables)
+
+    print_log(cfg,
+        f'{run_type} chunked query completed with {check_table_length(internet_table)} unfiltered results',
+        case=['verbose'])
+    return internet_table
 
 def run_timed_chunk(function_to_run, function_args, sub_coords, chunk_id=(1,1,None)):
     chunk_started_at = datetime.now()

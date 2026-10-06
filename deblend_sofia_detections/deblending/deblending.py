@@ -1,5 +1,5 @@
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical,\
-    download_gaia_table,download_internet_table,_tracked_gate,_NULL_GATE,\
+    download_internet_table,_tracked_gate,_NULL_GATE,\
     _QUERY_RUN_COUNTER
 from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
