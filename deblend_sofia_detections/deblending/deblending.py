@@ -196,9 +196,6 @@ def check_true_different(cfg,segments,header):
     else:
         pix_beam_area = (4.**2)/(4.*np.log(2.))
         pix_fwhm= 3.
-
-    
-
     results = {}
     for source in np.unique(segments):
         if source == 0:
@@ -623,7 +620,8 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     return masked_deb,optical_image[0].header,hi_mask
 def obtain_ancillary_data(cfg,sources=None):
     #get an optical background image
-    if not os.path.exists(f'{cfg.internal.optical_background}'):
+    if not os.path.exists(f'{cfg.internal.optical_background}') and\
+        cfg.input.use_optical_deblending:
         print_log(cfg,f"Creating the full FOV optical image for {cfg.sofia.original_data_cube}.",case= ['verbose'])
         creating_full_FOV_optical(cfg)
     
