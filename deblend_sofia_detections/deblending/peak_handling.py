@@ -1,9 +1,9 @@
 from tabnanny import verbose
 
-from deblend_sofia_detections import report_version
 from deblend_sofia_detections.support.logging import print_log
+from deblend_sofia_detections.support.support_functions import write_fits_file
 from astropy.table import QTable
-from astropy.io import fits
+
 
 from multiprocessing import get_context
 from itertools import islice
@@ -169,7 +169,7 @@ def find_peaks(cfg,data, threshold, box_size=[3,3,3], mask=None,
    
     print_log(cfg,f"Saving peak markers to {cfg.logging.log_directory}/peak3d_markers.fits",case=['debug'])
     if 'FIND_PEAKS' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:    
-        fits.writeto(f"{cfg.logging.log_directory}/peak3d_markers_{cfg.internal.image_counter}.fits",markers3d,
+        write_fits_file(f"{cfg.logging.log_directory}/peak3d_markers_{cfg.internal.image_counter}.fits",markers3d,
             header=cube_header, overwrite=True)
         cfg.internal.image_counter += 1
 

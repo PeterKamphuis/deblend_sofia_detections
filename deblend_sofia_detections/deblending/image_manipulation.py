@@ -8,7 +8,8 @@ from deblend_sofia_detections.deblending.sofia_functions import \
 from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
-    close_variables,get_channel_width
+    close_variables,get_channel_width,open_fits_file,create_WCS,write_fits_file,\
+    get_fits_header
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     check_columns_dtype
 from deblend_sofia_detections.support.logging import print_log
@@ -17,11 +18,9 @@ from deblend_sofia_detections.support.logging import print_log
 #from astropy.convolution import convolve,Gaussian1DKernel
 from scipy.ndimage import gaussian_filter1d
 from astropy.coordinates import SkyCoord
-from astropy.io import fits
 from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
-from astropy.table import Table,QTable
-from astropy.wcs import WCS
+from astropy.table import QTable
 from astropy.wcs.utils import proj_plane_pixel_scales
 from multiprocessing import Pool
 from concurrent.futures import ThreadPoolExecutor
@@ -42,8 +41,8 @@ import warnings
 
 
 def add_to_original(original_data, cut_data,sofia_id = 1):
-    original_wcs = WCS(original_data[0].header)
-    cut_wcs = WCS(cut_data[0].header)
+    original_wcs = create_WCS(original_data[0].header)
+    cut_wcs = create_WCS(cut_data[0].header)
     cut_origin = cut_wcs.wcs_pix2world(0,0,0,1)
     original_coord = original_wcs.wcs_world2pix(*cut_origin,1.)
     expanded_new = np.zeros_like(original_data[0].data)
@@ -59,7 +58,7 @@ def add_to_original(original_data, cut_data,sofia_id = 1):
 def cut_optical(cfg,hdr_over,wcs,imdir,image):
     '''Cut out the optical image'''
     #load a smaller part from a larger fits image
-    optical_image=fits.open(f'{imdir}/{image}',verify_output='ignore')
+    optical_image = open_fits_file(f'{imdir}/{image}',verify_output='ignore')
    
     try:
         hdr = optical_image[0].header
@@ -70,7 +69,7 @@ def cut_optical(cfg,hdr_over,wcs,imdir,image):
             data = optical_image.data
         except:
             return None
-    opt_wcs= WCS(hdr)
+    opt_wcs= create_WCS(hdr)
     sizecut = [hdr_over['NAXIS1'], hdr_over['NAXIS2']]
     centralpix = [hdr_over['NAXIS1']/ 2., hdr_over['NAXIS2']/ 2.]
     rascr, decscr = wcs.wcs_pix2world(*centralpix,1.)
@@ -160,11 +159,14 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     dec_range = [optical_wcs.wcs_pix2world(0, 0, 1)[1], optical_wcs.wcs_pix2world(w, h, 1)[1]]
    
     # exclude stars outside the image bounds
-    gaia_table = gaia_table[(gaia_table["ra"] >= ra_range[0]-0.1) & (gaia_table["ra"] <= ra_range[1]+0.1) &
-                            (gaia_table["dec"] >= dec_range[0]-0.1) & (gaia_table["dec"] <= dec_range[1]+0.1)]
+    gaia_table = gaia_table[(gaia_table["RA"] >= ra_range[0]-0.1) & (gaia_table["RA"] <= ra_range[1]+0.1) &
+                            (gaia_table["DEC"] >= dec_range[0]-0.1) & (gaia_table["DEC"] <= dec_range[1]+0.1)]
     gaia_table.sort('phot_rp_mean_mag')  # Sort by brightness (smaller magnitude is brighter)
-    gaia_table = gaia_table[0:int(len(gaia_table)*.5)]  # Limit to the upper half of the brightness distribution
-    star_coords = SkyCoord(ra=gaia_table["ra"], dec=gaia_table["dec"],
+    #if len(gaia_table) > 400:
+    #    gaia_table = gaia_table[0:int(len(gaia_table)*.5)]  # Limit to the upper half of the brightness distribution
+    #else:
+    #    gaia_table = gaia_table[0:200]  # Keep all stars if there are 400 or fewer
+    star_coords = SkyCoord(ra=gaia_table["RA"], dec=gaia_table["DEC"],
                             unit=(u.deg, u.deg), frame='fk5')
     
     x, y = optical_wcs.world_to_pixel(star_coords)
@@ -179,9 +181,11 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
             gaia_table["phot_rp_mean_mag"])**3 * radius_pixels  # Example scaling factor for radius
    
     individual_radius[individual_radius <radius_pixels] = radius_pixels
-
+    #for i in range(len(x)):
+    #    print(f"Star {i}: x={x[i]}, y={y[i]}, radius={individual_radius[i]} coordinates=({star_coords[i].ra.deg}, {star_coords[i].dec.deg}) mag = {gaia_table['phot_rp_mean_mag'][i]}")
+    #exit()
     # Mask stars
-    print_log(cfg,f"Masking {len(x)} stars in the optical image.",case=['verbose','screen'])
+    print_log(cfg,f"Masking {len(x)} stars in the optical image.",case=['verbose'])
    
     yy, xx = np.indices(optical_image.data.shape)
     
@@ -206,8 +210,11 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
     r_valid = r_arr[valid_mask]
     
 
-
-    print_log(cfg,f"Processing {len(x_valid)} valid stars out of {len(x_arr)} total stars",case=['verbose'])
+    if len(x_valid) == 0:
+        print_log(cfg,"No valid stars to process.",case=['verbose'])
+        return star_mask, True
+    else:
+        print_log(cfg,f"Processing {len(x_valid)} valid stars out of {len(x_arr)} total stars",case=['verbose'])
     
     # Process stars in chunks to avoid memory issues
     chunk_size = min(35, len(x_valid))  # Adjust based on available memory
@@ -244,7 +251,7 @@ Created the star mask to the optical image.''',case=['screen'])
 
 def mask_source_from_table(cfg,optical_markers,optical_header,mask=None, 
         src_table = None):
-    optical_wcs = WCS(optical_header)
+    optical_wcs = create_WCS(optical_header)
     if mask is None:
         masked_deb = np.full_like(optical_markers, 0)
     else: 
@@ -268,8 +275,15 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
             ,case=['debug'])
         src_table['PA'] = np.full(len(src_table), 0.) * u.deg
   
-    maj_sizes = ["sma",'major_axis','maj_ang_size','maj_angsize']
-    min_sizes = ["smb",'minor_axis','min_ang_size','min_angsize','e','ellipticity']
+    major_size = ['major_axis','maj_ang_size','maj_angsize']
+    semi_major_size = ['sma']
+    for size in major_size:
+        semi_major_size += [f'semi_{size}']
+    minor_size = ['minor_axis','min_ang_size','min_angsize']
+    semi_minor_size = ['smb']
+    for size in minor_size:
+        semi_minor_size += [f'semi_{size}']
+    semi_minor_size += ['e','ellipticity']
     source_counter = 1
     # Pre-filter rows with NaN coordinates/PA and batch-convert to pixel coords
     all_indices = np.array(range(check_table_length(src_table)))
@@ -291,14 +305,23 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
         xcen = all_xcens[loop_idx]
         ycen = all_ycens[loop_idx]
 
-        sma = 10.* pixel_scale.to(u.arcsec)
-        for size in maj_sizes:
+        sma = None
+        for size in semi_major_size:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):
                     sma = src_table[size][i].to(u.arcsec)
                     break
-        smb = float('NaN')
-        for size in min_sizes:
+        if sma is None:
+            for size in major_size:
+                if size in src_table.colnames:
+                    if not np.isnan(src_table[size][i]):
+                        sma = src_table[size][i].to(u.arcsec)/2.
+                        break
+        if sma is None:
+            sma= 3. * pixel_scale.to(u.arcsec)
+        
+        smb = None
+        for size in semi_minor_size:
             if size in src_table.colnames:
                 if not np.isnan(src_table[size][i]):
                     if size in ['e','ellipticity']:
@@ -306,7 +329,14 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
                     else:
                         smb = src_table[size][i].to(u.arcsec)
                     break
-        if np.isnan(smb):
+        if smb is None:
+            for size in minor_size:
+                if size in src_table.colnames:
+                    if not np.isnan(src_table[size][i]):
+                        smb = src_table[size][i].to(u.arcsec)
+                        break
+                    
+        if smb is None:
             print_log(cfg,f"No valid minor axis size found for source {src_table['RA'][i], src_table['DEC'][i]}. Defaulting to a circle with radius =  {sma}."
                 ,case=['debug'])
             smb = sma   
@@ -362,7 +392,7 @@ def split_sources(cfg_in,cube_name, mask,
     #Prepare to run sofia until all sources are matched.
     matched = False
     counter = 0
-    maskhdr= fits.getheader(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
+    maskhdr= get_fits_header(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
     header_info = {'pixelsize': float(np.mean([abs(maskhdr['CDELT1']),
                     abs(maskhdr['CDELT2'])]))*u.deg,
                        'channel_width': get_channel_width(maskhdr,velocity=True)}
@@ -371,7 +401,7 @@ def split_sources(cfg_in,cube_name, mask,
     while not matched:
         # Run sofia
         print_log(cfg,f"Running SoFiA on {cube_name} with mask {mask} in {outdir}/Sofia_Output/sofia_input.par",
-            case=['verbose','screen'])
+            case=['verbose'])
         sofia_output = execute_sofia(cfg,run_directory=f'{outdir}/Sofia_Output/')
         if sofia_output != 'Success':
             raise RuntimeError(f"SoFiA execution failed for {cube_name} with mask {mask}. Please check the SoFiA output for errors.")
@@ -382,11 +412,11 @@ def split_sources(cfg_in,cube_name, mask,
             sofia_directory=f'{outdir}/Sofia_Output/',sofia_basename=basename,
             no_conversion=False) 
         print_log(cfg,f"Read the SoFiA output table from {outdir} the cube {name} with {len(sources_to_split)} sources.",
-            case=['verbose','screen'])
+            case=['verbose'])
         if sources_to_split is None:
             raise ValueError(f"SoFiA did not produce an output table for {cube_name}. Please check the SoFiA output for errors.")
         if len(sources_to_split) == 1:
-            print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose','screen'])
+            print_log(cfg,f"Only one source left in the mask {mask}. No deblending needed.", case=['verbose'])
             matched = True
             break
 
@@ -403,17 +433,27 @@ def split_sources(cfg_in,cube_name, mask,
             # threads avoid pickling QTable rows entirely
             source_results = list(executor.map(func,
                 [source for source in sources_to_split]))
+            
         match_table = None
         source_dtypes = {}
         counterparts = {}  
+
         for source in source_results: 
-            if (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
-                and not source['Manual_Object Name'][0] in [x for x in counterparts]\
-                and source['Manual_Object Name'][0] != 'NaN':
-                source['Name'] =  source['Manual_Object Name'][0]
-                    
-            elif source['INTERNET_spectroscopic'] and not \
+            
+            print_log(cfg,f''' For source {source['sofia_id'][0]} with velocity {source['sofia_v_sofia'][0]} we find:
+Manual Object Name = {source['Manual_Object Name'][0]} and it is spectroscopic {source['Manual_spectroscopic'][0]}
+INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscopic {source['INTERNET_spectroscopic'][0]} with velocity {source['INTERNET_Velocity'][0]}
+''',case=['verbose'])
+
+            
+            if source['Manual_Object Name'][0] in [x for x in counterparts] or \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
+                source['Name'] =  source['sofia_name'][0]
+            elif (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
+                and source['Manual_Object Name'][0] != 'NaN':
+                source['Name'] =  source['Manual_Object Name'][0]                    
+            elif source['INTERNET_spectroscopic'] and \
+                source['INTERNET_Object Name'][0] != 'NaN':
                 source['Name'] =  source['INTERNET_Object Name'][0]  
             else:
                 source['Name'] =  source['sofia_name'][0]
@@ -421,11 +461,11 @@ def split_sources(cfg_in,cube_name, mask,
             source_row = source[0]
             if source_row['Name'] == source_row['sofia_name']:
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has no counterpart in the catalogue. Replacement needed."
-                    ,case=['verbose','screen']) 
+                    ,case=['verbose']) 
             else:
                 counterparts[source_row['Name']] = source_row['sofia_id']
                 print_log(cfg,f"SPLIT_SOURCE: Source id {source_row['sofia_id']} with name {source_row['Name']} has a counterpart in the catalogue. No replacement needed."
-                    ,case=['verbose','screen'])
+                    ,case=['verbose'])
         
             if source_row['Name'] == source_row['sofia_name']:
                 rep = closest_sofia_source(cfg,source_row['sofia_id'],sources_to_split,
@@ -447,25 +487,25 @@ def split_sources(cfg_in,cube_name, mask,
         # If we have tried too many time we break
         if counter > 50:
             print_log(cfg,f"Warning: More than 50 matching counterparts for {name}.", case=['verbose'])
-            matched = True        
-        maskin= fits.open(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')
+            matched = True 
+        maskin= open_fits_file(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')       
        
         #Checkin what we have
         print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
-            , case=['verbose','screen'])            
+            , case=['verbose'])            
         if len(id) == len(sources_to_split):
-            print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose', 'screen'])
+            print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose'])
             matched = True
         elif np.unique(maskin[0].data).size-1 == 1:
-            print_log(cfg,f"Only one source found in the mask {mask}. No deblending needed.", case=['verbose', 'screen'])
+            print_log(cfg,f"Only one source found in the mask {mask}. No deblending needed.", case=['verbose'])
             matched = True
         else:
             print_log(cfg,f'''The mask has the following source {np.unique(maskin[0].data)}
-the counterparts map {counterparts}''', case=['verbose','screen'])
+the counterparts map {counterparts}''', case=['verbose'])
             for pair in replace_id:
-                print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose','screen'])
+                print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose'])
                 maskin[0].data[maskin[0].data == pair[0]] = pair[1]
-            fits.writeto(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
+            write_fits_file(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
                  overwrite=True,output_verify='ignore')
        
     # Copying the final mask to the output directory 
@@ -504,8 +544,12 @@ def subtract_background(cfg,image,wcs):
     box_size = [boxin, boxin]  # box size for background estimation
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        background = Background2D(image, box_size)
-        new_image = image - background.background
+        try:
+            background = Background2D(image, box_size)
+        except Exception as e:
+            print_log(cfg,f"Background subtraction failed: {e}", case=['main'])
+            background = None
+        new_image = image - background.background if background is not None else image
     new_wcs = copy.deepcopy(wcs)
     close_variables(image,background,wcs)
     return new_image,new_wcs

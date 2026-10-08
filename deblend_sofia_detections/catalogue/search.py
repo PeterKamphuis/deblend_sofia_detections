@@ -5,11 +5,11 @@ from deblend_sofia_detections.support.table_functions import check_table_length,
     read_manual_table, combine_tables, copy_table_header
 from deblend_sofia_detections.support.support_functions import convertRADEC,\
     isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
-    get_channel_width,get_ned_requested_metadata
+    get_channel_width,get_ned_requested_metadata,open_fits_file
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.constants import C,rest_HI
 from deblend_sofia_detections.support.system_functions import join_path
-from astropy.io import fits
+
 from astropy.table import QTable,Table,vstack
 from datetime import datetime
 import astropy.units as u
@@ -22,14 +22,14 @@ import pickle
 
 def create_source_table(source,cfg=None,basename=None,sofia_directory='./'):
     print_log(cfg,f"Processing deblended source with id {source['id'][0]} and name {source['name'][0]} "
-                    ,case=['verbose','screen'])
+                    ,case=['verbose'])
     #First we check if we have previous iteration output
     source = search_counter_part(cfg,source,basename=basename,
         query = 'INTERNET',sofia_directory=sofia_directory,
         insource='sofia')
+  
     source = search_counter_part(cfg,source,basename=basename,
         query='Manual',sofia_directory=sofia_directory)
-    
     
     return source    
   
@@ -73,7 +73,7 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
 Search a radius {radius.to(u.arcsec)} around {", ".join(convertRADEC(cfg,coordinates[0].value,coordinates[1].value))}
 The nearest target is {search_table['Object Name'][0]} at a distance of {search_table["Spatial Diff"][0].to(u.arcsec)}
 And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} to vsys {vsys.to(u.km/u.s)}''',
-        case=['verbose','screen'])
+        case=['verbose'])
     #the closest 200 source should suffice
     search_table = search_table[0:200]
     #let's mask all that are outside the range if we have set a range of velocities
@@ -93,9 +93,9 @@ And the velocity difference is {search_table["Velocity Diff"][0].to(u.km/u.s)} t
         if search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec):
             search_table = QTable() 
     elif search_table['Spatial Diff'][0] > 2.*radius.to(u.arcsec) or\
-       search_table['Velocity Diff'][0] > sysrange:
+       (search_table['Velocity Diff'][0] > sysrange and spectroscopic):
        search_table = QTable()
-   
+
     return search_table
 
 
@@ -111,13 +111,13 @@ def search_counter_part(cfg,source,sofia_directory= './',
         inid = source['id']
     except:
         inid = source['sofia_id']
-    
+   
     print_log(cfg,f'Searching in {query} to find a counterpart for {basename} with id {inid}',
         case=['verbose'])
    
     input_dir = f'{sofia_directory}/{basename}_cubelets'
     
-    cube = fits.open(f'{input_dir}/{basename}_{inid}_cube.fits',\
+    cube = open_fits_file(f'{input_dir}/{basename}_{inid}_cube.fits',\
         output_verify='warn')
     header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
                 'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),
@@ -212,10 +212,16 @@ def search_counter_part(cfg,source,sofia_directory= './',
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = False
-    
+   
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')
+    for col in final_row.colnames:
+        current_dtype = np.dtype(final_row[col].dtype)
+        if current_dtype.kind == 'U':
+            current_chars = current_dtype.itemsize // np.dtype('U1').itemsize
+            if current_chars < 30:
+                 final_row[col] = final_row[col].astype('U30')
     close_variables(spectroscopic_table)
     return final_row
 
@@ -304,9 +310,10 @@ def sort_by_name(table):
 
 '''Sort the table by distance'''
 def sort_on_distance(cfg, table_in, coordinates, vsys, 
-        header_info = None, weights = [1.,1.],spectroscopic=True):
+        header_info = None, spectroscopic=True):
     # this stupid table is not ordered so get names, types ra and dec 
     # and sort on distance
+
     if vsys is None and spectroscopic:
         print_log(cfg,
             f'No systemic velocity found for {table_in["Object Name"][0]}. This is a logical error',
@@ -326,10 +333,11 @@ def sort_on_distance(cfg, table_in, coordinates, vsys,
     table = copy.deepcopy(table_in)
     if not only_sort:
         print_log(cfg,f'Before sorting: {table_in[0]}',case=['verbose'])
-        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])      
-        if np.all(np.array(weights) == 1.) and not header_info is None:
-            weights = [header_info['pixelsize'], 
-                       header_info['channel_width']]
+        print_log(cfg,f'This the table type {type(table_in)}',case=['debug'])  
+        weights = [(cfg.internal.weights[0]*u.arcsec).to(u.deg), cfg.internal.weights[1]*u.km/u.s]
+        #if np.all(np.array(weights) == 1.) and not header_info is None:
+        #    weights = [header_info['pixelsize'], 
+        #               header_info['channel_width']]
             
         print_log(cfg,f'Using weights {weights}',case=['debug'])
         if spectroscopic:

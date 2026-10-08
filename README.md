@@ -19,6 +19,7 @@ The code requires full installation of:
     SoFiA-2
     
 [python](https://www.python.org/)
+
 [SoFiA-2](https://gitlab.com/SoFiA-Admin/SoFiA-2)
 
 
@@ -51,11 +52,11 @@ Once you have installed deblend_sofia_detections you can check that it has been 
 Running deblend_sofia_detections_venv
 ------------------
 
-You can run deblend_sofia_detectionsby providing a configuration file by 
+You can run deblend_sofia_detections on a sofia catalogue by providing a configuration file with: 
 
     deblend configuration_file=file.yml
 
-an example yaml file with all parameters can be printed by running
+an example yaml file with all parameters can be printed by running:
 
     deblend print_examples=true 
 
@@ -63,4 +64,4 @@ If you only have a mask and a cube you can deblend those too with:
 
     deblend_cube sofia.original_data_cube=<HI data cube.fits> sofia.original_mask=<blended mask.fits>
 
-please see the advanced input in readthedocs for an explanation of all parameters.
+please see the advanced input in readthedocs for an explanation of all parameters in the yaml file.

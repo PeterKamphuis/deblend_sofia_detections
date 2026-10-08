@@ -1,9 +1,12 @@
 from deblend_sofia_detections.config.config import defaults
 from deblend_sofia_detections.support.errors import InputError
 from deblend_sofia_detections.support.logging import print_log,start_new_log
+from deblend_sofia_detections.support.support_functions import get_fits_header
 from deblend_sofia_detections.support.system_functions import join_path,create_directory
 from deblend_sofia_detections.deblending.sofia_functions import load_sofia_input_file
+
 from omegaconf import OmegaConf,MISSING
+from astropy import units as u
 
 import os
 import psutil
@@ -75,15 +78,21 @@ configuration_file = ''')
     cfg = OmegaConf.merge(cfg,inputconf) 
   
     #open the input parameter file to obtain the data cube and output locations
+  
     if single_cube:
         cfg = check_single_cube_input(cfg)
     else:
         cfg = read_parameter_input(cfg)
+  
     cfg = directory_check(cfg)
     if cfg.directories.run_directory != os.getcwd():
         os.chdir(cfg.directories.run_directory)
     cfg = background_check(cfg)
     cfg = check_debug_functions(cfg)
+    if cfg.input.manual_markers_only and cfg.input.use_optical_deblending\
+        and cfg.input.manual_input_tables[0] is None:
+        print(f"You requested manual markers only but have not provided a table.")
+        raise InputError(f"You requested manual markers only but have not provided a table.")
    
     return cfg
 
@@ -126,8 +135,13 @@ def check_single_cube_input(cfg):
             cube_ext = os.path.splitext(os.path.splitext(cfg.sofia.original_data_cube)[0])[1]+cube_ext
 
         cfg.internal.cube_ext = cube_ext
+        
         if cfg.sofia.original_mask == '':
             cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask{cube_ext}'
+        elif os.path.split(cfg.sofia.original_mask)[0] != '':
+            # in case the user provides an absolute path
+            cfg.sofia.original_mask = os.path.split(cfg.sofia.original_mask)[1]
+
         if not os.path.isfile(join_path(cfg.sofia.directory,cfg.sofia.original_mask)):
             raise InputError(f'''The mask file {cfg.sofia.original_mask} does not exist in the directory {cfg.sofia.directory}. Please provide a correct mask file.''')
     # As we have no way to reproduce the mask in this case we do not want to modify it.
@@ -141,7 +155,8 @@ def check_single_cube_input(cfg):
     return cfg
 
 def directory_check(cfg):
-    dirs = ['data_directory', 'run_directory', 'ancillary_directory', 'watershed_directory']
+    dirs = ['data_directory', 'run_directory', 'ancillary_directory', 
+        'watershed_directory']
     
     if cfg.sofia.directory[-1] != '/':
         cfg.sofia.directory += '/'
@@ -156,18 +171,16 @@ def directory_check(cfg):
         cfg.directories.watershed_directory = join_path(cfg.sofia.directory,
             cfg.directories.watershed_directory)
         directories_to_create.append(cfg.directories.watershed_directory)
-
+   
     cfg.internal.input_log_directory = copy.deepcopy(cfg.logging.log_directory)
     cfg.internal.input_log_file = copy.deepcopy(cfg.logging.log_file)    
- 
-
-
     for attr in dirs:
         test_dir = getattr(cfg.directories, attr)
         directories_to_check.append(test_dir)
         if test_dir[-1] != '/':
             test_dir += '/'
             setattr(cfg.directories , attr, test_dir)
+    
     if cfg.input.internet_query.lower() != 'none':
         directories_to_check.append(f'{cfg.directories.ancillary_directory}/tables/')
         directories_to_create.append(f'{cfg.directories.ancillary_directory}/tables/')

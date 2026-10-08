@@ -3,7 +3,7 @@ from deblend_sofia_detections import template as templates
 from deblend_sofia_detections.support.errors import InputError,SofiaError
 from deblend_sofia_detections.support.support_functions import \
     convert_pix_columns_to_arcsec,translate_string_to_unit,get_source_cat_name,\
-    get_start_end_locations,convert_pixel_values_to_original
+    get_start_end_locations,convert_pixel_values_to_original,open_fits_file
 from deblend_sofia_detections.support.system_functions import convert_ps,join_path
 from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.constants import C,rest_HI
@@ -14,7 +14,7 @@ except ImportError:
     from importlib_resources import open_text as pack_open_txt
 
 from astropy.table import QTable
-from astropy.io import votable,fits
+from astropy.io import votable
 from astropy import units as u
 
 import os
@@ -53,8 +53,12 @@ def check_parameters(table,variables=None,no_conversion=False):
                     # replace the freq with v_sofia in the new name
                     new_column = check.replace('freq','v_sofia')
                  
-                    table[new_column] = [(C.to(u.km/u.s)*(1-x.to(u.Hz)/rest_HI).decompose().value).value for x in table[check]]*u.km/u.s
+                    # table[new_column] = [(C.to(u.km/u.s)*(1-x.to(u.Hz)/rest_HI).decompose().value).value for x in table[check]]*u.km/u.s
                     #table[new_column].unit = u.km/u.s
+
+                    # use optical convention for velocity
+                    table[new_column] = [(C.to(u.km/u.s)*((rest_HI/x.to(u.Hz) - 1).decompose().value)).value for x in table[check]]*u.km/u.s
+
                     velocity = new_column
                     trig = False
                     break
@@ -119,9 +123,8 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
             prefix = 'sofia_'
             break
     ids = [x for x in sources[prefix+'id']]  
-    weights = [header_info['pixelsize'].to(u.deg).value,
-            header_info['channel_width'].to(u.km/u.s).value] if\
-        header_info else [1., 1.]
+    weights = [(cfg.internal.weights[0]*u.arcsec).to(u.deg).value, cfg.internal.weights[1]]
+  
     source_row = sources[ids.index(source_id)]
     source_coords = (source_row[f'{prefix}ra'], source_row[f'{prefix}dec'],source_row[f'{prefix}v_sofia'])
     min_distance = float('inf')
@@ -130,7 +133,8 @@ def closest_sofia_source(cfg,source_id,sources,header_info=None):
     for row in sources:
         if row[f'{prefix}id'] != source_id:
             row_coords = (row[f'{prefix}ra'], row[f'{prefix}dec'], row[f'{prefix}v_sofia'])
-            distance = np.sqrt(((source_coords[0].to(u.deg).value - row_coords[0].to(u.deg).value)/weights[0])**2 
+            distance = np.sqrt(((source_coords[0].to(u.deg).value - row_coords[0].to(u.deg).value)/weights[0]\
+                                 * np.cos(np.deg2rad(source_coords[1].to(u.deg).value)))**2 
                 + ((source_coords[1].to(u.deg).value - row_coords[1].to(u.deg).value)/weights[0])**2 
                 + ((source_coords[2].to(u.km/u.s).value - row_coords[2].to(u.km/u.s).value)/weights[1])**2)
             if distance < min_distance:
@@ -192,8 +196,8 @@ def load_sofia_basename(filename):
     return os.path.basename(os.path.splitext(input_file['input.data'])[0])
 
 def load_sofia_catalogue(cfg,filename, variables = None,no_conversion=False):
-    '''Read a specified sofia table into a Astropy QTable'''   
-    print_log(cfg,f'Reading the sofia catalogue {filename}. \n',case=['debug','screen'] )  
+    '''Read a specified sofia table into a Astropy QTable'''    
+    print_log(cfg,f'Reading the sofia catalogue {filename}. \n',case=['debug'] )
     if filename.endswith('.xml'): 
         sources = read_sofia_xml(cfg,filename)
     else:
@@ -347,12 +351,12 @@ def move_sources(cfg,indir,old_new_ids,originalbasename,basename,original_id,bas
 
 def obtain_sofia_id(base_name, cube_name):
     tmp,cube_file = os.path.split(cube_name)
-    split_main = cube_file.split(base_name)
-    parts = split_main[1].split('_')
-    id  = parts[1]
+    
     try:
-        int(id)
-    except ValueError:
+        split_main = cube_file.split(base_name)
+        parts = split_main[1].split('_')
+        id  = int(parts[1])
+    except (ValueError, IndexError):
         id = '1'
     return id,cube_file
 
@@ -379,7 +383,7 @@ probably no sources were found or you made a mistake.''',case=['verbose'])
         return None,None
     req_variables = ['name','f_sum','err_f_sum','id','ell3s_maj',
         'ell3s_min','w20','ra','dec','v_sofia','kin_pa','x','y','z',
-        'x_min','x_max','y_min','y_max',
+        'x_min','x_max','y_min','y_max', 'z_min','z_max',
         'f_max','ell_maj','ell_min','rms','ell_pa']
 
     sources = load_sofia_catalogue(cfg,table_name,
@@ -469,6 +473,7 @@ def rerun_sofia(cfg):
     write_sofia(sofia_temp,f'{cfg.sofia.parameter_path}/deblend_sofia.par')
     execute_sofia(cfg,run_directory=cfg.sofia.parameter_path,
         sofia_parameter_file='deblend_sofia.par')
+    os.remove(f'{cfg.sofia.parameter_path}/deblend_sofia.par')
     #mark the new cubelets as deblended
     mark_as_deblended(cfg)
     
@@ -486,7 +491,8 @@ def mark_as_deblended(cfg,sofia_directory=None,sofia_basename=None):
     for f in files_to_mark:
         print_log(cfg,f'Marking {f} as deblended',case=['verbose'])
         cube_name = f'{sofia_directory}/{sofia_basename}_cubelets/{f}'
-        with fits.open(cube_name, mode='update') as file:
+
+        with open_fits_file(cube_name, mode='update') as file:
             file[0].header['SOF_DEB'] = True
             
   

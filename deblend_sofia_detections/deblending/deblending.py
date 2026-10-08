@@ -1,5 +1,6 @@
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical,\
-    download_gaia_table,download_ned_table,download_simbad_table
+    download_internet_table,_tracked_gate,_NULL_GATE,\
+    _QUERY_RUN_COUNTER
 from deblend_sofia_detections.deblending.image_manipulation import\
     mask_gaia_stars,get_background,split_sources,freq_smooth,subtract_background,\
     mask_source_from_table,add_to_original
@@ -9,14 +10,13 @@ from deblend_sofia_detections.deblending.sofia_functions import read_sofia_table
 from deblend_sofia_detections.support.logging import print_log,start_new_log
 from deblend_sofia_detections.support.system_functions import create_directory,join_path
 from deblend_sofia_detections.support.support_functions import match_size,\
-    close_variables
+    close_variables,open_fits_file,create_WCS,write_fits_file,get_fits_header
 from deblend_sofia_detections.support.table_functions import read_manual_table,check_table_length
 from deblend_sofia_detections.support.errors import RunTimeError
 from astropy.convolution import convolve_fft
-from astropy.io import fits
 from astropy.table import QTable
 from astropy.wcs.utils import proj_plane_pixel_scales
-from astropy.wcs import WCS
+
 
 from skimage.segmentation import watershed
 from photutils.segmentation import detect_threshold, detect_sources,  make_2dgaussian_kernel
@@ -29,9 +29,9 @@ import numpy as np
 import os
 import pickle
 import shutil
-import warnings
 from datetime import datetime
 from multiprocessing import Pool
+from threading import BoundedSemaphore
 # -*- coding: future_fstrings -*-
 
 
@@ -39,7 +39,7 @@ from multiprocessing import Pool
 def check_source_size(cfg,segments,header):
     # Check the size of the sources in the 2D map
     if 'BMAJ' in header:
-        pixel_scale = np.mean(abs(proj_plane_pixel_scales(WCS(header).celestial)))*u.deg  
+        pixel_scale = np.mean(abs(proj_plane_pixel_scales(create_WCS(header).celestial)))*u.deg
         beamarea=(np.pi*abs(header['BMAJ']*header['BMIN']))/(4.*np.log(2.))*u.deg
         pix_beam_area = (beamarea/(pixel_scale**2)).value      
     else:
@@ -158,12 +158,97 @@ So we add it to it.''', case=['debug'])
                     mask[results[source]['mask']] = int(long_border)
                     merge = True
     return mask
- 
 
+def get_source_geometry(mask_in,source_id):
+        mask = mask_in == source_id
+        mask = np.sum(mask, axis=0)
+        mask[mask > 0] = 1
+        xs = np.where(mask)[1]
+        ys = np.where(mask)[0]
+        if len(xs) == 0 or len(ys) == 0:
+            return {
+                'Mean_pixel_x': 0.,
+                'Mean_pixel_y': 0.,
+                'Min_pixel_x': 0.,
+                'Min_pixel_y': 0.,
+                'Max_pixel_x': 0.,
+                'Max_pixel_y': 0.,
+            }
+        return {
+            'Mean_pixel_x': np.mean(xs),
+            'Mean_pixel_y': np.mean(ys),
+            'Min_pixel_x': np.min(xs),
+            'Min_pixel_y': np.min(ys),
+            'Max_pixel_x': np.max(xs),
+            'Max_pixel_y': np.max(ys),
+        } 
+
+def check_true_different(cfg,segments,header):
+    # We do not accept source that have basically the same spatial layout but only differ in velocity
+    if len(segments.shape) != 3:
+        return segments
+    # Check the size of the sources in the 2D map
+    if 'BMAJ' in header:
+        pixel_scale = np.mean(abs(proj_plane_pixel_scales(create_WCS(header).celestial)))*u.deg
+        beamarea=(np.pi*abs(header['BMAJ']*header['BMIN']))/(4.*np.log(2.))*u.deg
+        pix_beam_area = (beamarea/(pixel_scale**2)).value   
+        pix_fwhm = header['BMAJ'] / pixel_scale.value
+    else:
+        pix_beam_area = (4.**2)/(4.*np.log(2.))
+        pix_fwhm= 3.
+    results = {}
+    for source in np.unique(segments):
+        if source == 0:
+            continue
+        results[source] = get_source_geometry(segments,source)
+
+    merged = True
+    while merged:
+        merged = False
+        source_ids = sorted(results.keys())
+        for i, source in enumerate(source_ids):
+            for other in source_ids[i+1:]:
+                if other not in results:
+                    continue
+                source_data = results[source]
+                other_data = results[other]
+
+                mean_sep_x = abs(source_data['Mean_pixel_x'] - other_data['Mean_pixel_x'])
+                mean_sep_y = abs(source_data['Mean_pixel_y'] - other_data['Mean_pixel_y'])
+                x_gap = min(abs(source_data['Min_pixel_x'] - other_data['Max_pixel_x']),
+                            abs(other_data['Min_pixel_x'] - source_data['Max_pixel_x']))
+                y_gap = min(abs(source_data['Min_pixel_y'] - other_data['Max_pixel_y']),
+                            abs(other_data['Min_pixel_y'] - source_data['Max_pixel_y']))
+
+                distinct = ((mean_sep_x > pix_fwhm or mean_sep_y > pix_fwhm) and
+                            (x_gap > pix_fwhm or y_gap > pix_fwhm))
+
+                if distinct:
+                    continue
+
+                low_id, high_id = sorted((source, other))
+                print_log(cfg,
+                    f"Merging source {high_id} into source {low_id} because their projected positions are not separated by more than {pix_fwhm} pixels in the 2D map.",
+                    case=['debug'])
+                segments[segments == high_id] = low_id
+                del results[high_id]
+                merged = True
+                break
+            if merged:
+                break
+
+        if merged:
+            results = {}
+            for source in np.unique(segments):
+                if source == 0:
+                    continue
+                results[source] = get_source_geometry(segments,source)
+
+    return segments  
 
 def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_header= None,
         base_dir = './',source_id = 'unknown',mask =None):
-    """If cube is None we do not deplend on 3D 
+    """If cube is None we do not deblend on 3D 
     if mom0 is None we do not deblend on 2D
     """
    
@@ -197,7 +282,7 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
         use_extend=use_extend, marker_header=optical_header, data_header=data[0].header,
         outdir=outdir,source_id=source_id)     
     if 'DEBLEND_ON_OPTICAL' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/watershed_uncleaned_mask_{type_ind}_on_optical_source_{source_id}_dbimage_{cfg.internal.image_counter}.fits",original_deblending,
+        write_fits_file(f"{cfg.logging.log_directory}/watershed_uncleaned_mask_{type_ind}_on_optical_source_{source_id}_dbimage_{cfg.internal.image_counter}.fits",original_deblending,
             header=optical_header, overwrite=True)  
         cfg.internal.image_counter += 1
     
@@ -205,9 +290,9 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
     new_mask_HI = match_size(data[0].data,original_deblending,max =True)
     
     if 'DEBLEND_ON_OPTICAL' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/watershed_uncleaned_mask_{type_ind}_in_HI_res_dbimage_{cfg.internal.image_counter}.fits",
+        write_fits_file(f"{cfg.logging.log_directory}/watershed_uncleaned_mask_{type_ind}_in_HI_res_dbimage_{cfg.internal.image_counter}.fits",
             new_mask_HI,
-            header=data[0].header, overwrite=True)
+            data[0].header, overwrite=True)
         cfg.internal.image_counter += 1
     # we need to make sure one source is not continuosly
     # surrounded by the other
@@ -216,29 +301,29 @@ def deblend_on_optical(cfg,data_in,optical_markers_in,outdir='./', optical_heade
   
     print_log(cfg, f"Checking if any source is surrounded by another source in the {dimension}D data.",
         case=['verbose','screen'])
-    start= datetime.now()
-   
+    start= datetime.now() 
     new_mask = check_source_surrounded(cfg, new_mask_HI)
     end = datetime.now()
     print_log(cfg, f'''Finished checking if any source is surrounded by another source in the {dimension}D data.
 Time taken: {end - start}''', case=['verbose','screen'])
     if 'DEBLEND_ON_OPTICAL' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/cleaned_mask_{type_ind}_based_on_optical_markers_source_{source_id}_dbimage_{cfg.internal.image_counter}.fits",new_mask,
-                header=data[0].header, overwrite=True)
+        write_fits_file(f"{cfg.logging.log_directory}/cleaned_mask_{type_ind}_based_on_optical_markers_source_{source_id}_dbimage_{cfg.internal.image_counter}.fits",
+            new_mask,data[0].header, overwrite=True)
         cfg.internal.image_counter += 1
   
    
     print_log(cfg, f"Checking the size of the sources in the {type_ind} and removing sources that are smaller than the beam."
         , case=['verbose','screen'])
     new_mask_HI = check_source_size(cfg,new_mask,data[0].header,)
+    new_mask_HI = check_true_different(cfg,new_mask_HI,data[0].header)
     new_mask_HI = np.array(new_mask_HI,dtype=int)
     hdr = copy.deepcopy(data[0].header)
     if 'BSCALE' in hdr:
         del hdr['BSCALE']
     if 'BZERO' in hdr:
         del hdr['BZERO']
-    fits.writeto(f"{outdir}deblended_{type_ind}_mask_based_on_optical.fits",
-        new_mask_HI,header=hdr, overwrite=True)
+    write_fits_file(f"{outdir}deblended_{type_ind}_mask_based_on_optical.fits",
+        new_mask_HI, hdr, overwrite=True)
 
     if len(np.unique(new_mask_HI))-1 <= 1:
         sources = [False, 1000.]
@@ -294,10 +379,10 @@ Starting with smoothing the cube in frequency to find the peaks.
 We first smooth the cube''', case=['verbose'])
     cube_smooth = freq_smooth(cube[0].data, smooth=4.0)
     if 'DEBLEND_ON_PEAKS' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/Smoothed_cube_dbimage_{cfg.internal.image_counter}.fits", cube_smooth,
-                header=cube[0].header, overwrite=True)
+        write_fits_file(f"{cfg.logging.log_directory}/Smoothed_cube_dbimage_{cfg.internal.image_counter}.fits", cube_smooth,
+                cube[0].header, overwrite=True)
         cfg.internal.image_counter += 1
-    wcs = WCS(cube[0].header)
+    wcs = create_WCS(cube[0].header)
     #Is this always m/s?
     velocity_width = wcs.wcs.cdelt[2]* u.m/u.s
     # We actually do not smooth the mask but let's make a version
@@ -342,6 +427,8 @@ We first smooth the cube''', case=['verbose'])
         mask=np.abs(mask_smooth) > 1e-6,connectivity=1,
         compactness=cfg.input.compactness,
     )
+    res3d = check_true_different(cfg,res3d,cube[0].header)
+    res3d = np.array(res3d,dtype=int)
     finalhdr = copy.deepcopy(cube[0].header)# Save the results
     if 'BSCALE' in finalhdr:
         del finalhdr['BSCALE']
@@ -349,8 +436,8 @@ We first smooth the cube''', case=['verbose'])
         del finalhdr['BZERO']
     res3d = np.array(res3d, dtype=int)
     final_mask_name = f"{outdir}deblended_cube_mask_based_on_peaks.fits"
-    fits.writeto(final_mask_name, res3d,
-            header=finalhdr, overwrite=True)
+    write_fits_file(final_mask_name, res3d,
+            finalhdr, overwrite=True)
 
     sources_3D = len(np.unique(res3d))-1
     print_log(cfg, f"Found {sources_3D} sources in the cubelet {source_id} based on the peaks.", 
@@ -362,7 +449,7 @@ We first smooth the cube''', case=['verbose'])
     close_variables(cube_smooth,mask_smooth,res3d,markers3d)
     return result
 
-def deblend_single_detection(cfg):
+def deblend_single_detection(cfg, runtime_ctx=None):
     """
     Deblend a single source in the given data cube.
 
@@ -371,11 +458,16 @@ def deblend_single_detection(cfg):
     
     """
     print_log(cfg,f"Checking the source in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
-
-      
+   
     #obtain the ancillary data
-    obtain_ancillary_data(cfg)
-    mask = fits.open(f'{cfg.sofia.directory}/{cfg.sofia.original_mask}')
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
+    else:
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg, 'All_Downloads', run_id, internet_query_gate):
+        obtain_ancillary_data(cfg)
+    mask = open_fits_file(f'{cfg.sofia.directory}/{cfg.sofia.original_mask}')
     max_source_id_original = np.max(mask[0].data)
     max_source_id = copy.deepcopy(max_source_id_original)
 
@@ -406,7 +498,7 @@ def deblend_single_detection(cfg):
 
 
 @profile('profiler_logs/deblend_sofia_detections.log')
-def deblend_sofia_detections(cfg):
+def deblend_sofia_detections(cfg, runtime_ctx=None):
     """
     Deblend all sources in the given data cube.
 
@@ -414,15 +506,24 @@ def deblend_sofia_detections(cfg):
     cfg (Config): The configuration object.
     
     """
-    print_log(cfg,f"Checking the sources in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}")
+    print_log(cfg,f"Checking the sources in the cube {cfg.sofia.original_data_cube} in the directory {cfg.directories.data_directory}",
+            case=['main','screen'])
+
 
  
     #load the original sofia table
     sources,table_name = read_sofia_table(cfg,
         no_conversion = True)
-    
     #obtain the ancillary data
-    obtain_ancillary_data(cfg)
+    if runtime_ctx is None:
+        internet_query_gate = _NULL_GATE
+    else:
+        internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
+    run_id = next(_QUERY_RUN_COUNTER)
+    with _tracked_gate(cfg, 'All_Downloads', run_id, internet_query_gate):
+        obtain_ancillary_data(cfg,sources=sources)
+    #obtain the ancillary data
+   
 
     cubelets_dir = f'{cfg.sofia.directory}/{cfg.sofia.basename}_cubelets/'
     max_source_id_original = np.max([int(x) for x in sources['id']])
@@ -464,8 +565,9 @@ def deblend_sofia_detections(cfg):
 @profile('profiler_logs/detect_optical_sources.log')
 def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     """Detect sources in the optical image to use as markers for the watershed algorithm."""
-    optical_image = fits.open(cfg.internal.cleaned_optical_background)
-    threshold_smooth = detect_threshold(optical_image[0].data, nsigma=3,background= 0.0)
+    optical_image = open_fits_file(cfg.internal.cleaned_optical_background)
+    # do not name n_sigma/nsigma as its name changes in v3.0.0 of photutils
+    threshold_smooth = detect_threshold(optical_image[0].data, 3,background= 0.0)
     
     print_log(cfg,f"Using a threshold of  {np.mean(threshold_smooth)} for source detection."
         , case=['verbose'])
@@ -478,8 +580,8 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
         hi_mask[hi_mask < 1e-8] = 0.
         np.ma.make_mask(hi_mask, copy=False)   
         if 'DETECT_OPTICAL_SOURCES' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-            fits.writeto(f'{cfg.logging.log_directory}/hi_mask_matched_to_optical_{cfg.internal.image_counter}.fits',
-                hi_mask, header=optical_image[0].header, overwrite=True)
+            write_fits_file(f'{cfg.logging.log_directory}/hi_mask_matched_to_optical_{cfg.internal.image_counter}.fits',
+                hi_mask, optical_image[0].header, overwrite=True)
         cfg.internal.image_counter += 1
         #Detect sources takes a mask where True means the pixel should be ignored 
         #Which is terribly counterintuitive so we reverse the mask
@@ -491,12 +593,14 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     # As we only know for certain that the target has an optical counterpart we need a single source but
     # not necessarily more but if we have only one there is no point deblending
     segm_deblend = np.zeros(optical_image[0].data.shape)
-    while np.max(segm_deblend) < 2 and npixels > 20.:
-        segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels=npixels,mask=inv_mask)
-        if segm_deblend is None:
-            print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
-            segm_deblend = np.zeros(optical_image[0].data.shape)
-        npixels -= 10
+    if not cfg.input.manual_markers_only:
+        while np.max(segm_deblend) < 2 and npixels > 20.:
+            # do not name n_pixels/npixels as it changes name in photutils 3.0.0
+            segm_deblend = detect_sources(optical_image[0].data, threshold_smooth, npixels,mask=inv_mask)
+            if segm_deblend is None or np.max(segm_deblend) < 2:
+                print_log(cfg,"No sources detected in the optical image reducing the size of the pixels.", case=['verbose'])
+                segm_deblend = np.zeros(optical_image[0].data.shape)
+            npixels -= 10
       
    
     if np.max(segm_deblend) > 0:
@@ -507,16 +611,17 @@ def detect_optical_sources(cfg,mask=None,source_id = 'unknown'):
     if np.max(segm_deblend) > 0 and\
         ('DETECT_OPTICAL_SOURCES' in cfg.logging.debug_functions or 'ALL' in\
         cfg.logging.debug_functions):
-        fits.writeto(f'{cfg.logging.log_directory}/segmentation_map_of_optically_detected_sources_debug_image_{cfg.internal.image_counter}.fits',
-            segm_deblend.data, header=optical_image[0].header, overwrite=True)
+        write_fits_file(f'{cfg.logging.log_directory}/segmentation_map_of_optically_detected_sources_debug_image_{cfg.internal.image_counter}.fits',
+            segm_deblend.data, optical_image[0].header, overwrite=True)
         cfg.internal.image_counter += 1
 
     masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
 
     return masked_deb,optical_image[0].header,hi_mask
-def obtain_ancillary_data(cfg):
+def obtain_ancillary_data(cfg,sources=None):
     #get an optical background image
-    if not os.path.exists(f'{cfg.internal.optical_background}'):
+    if not os.path.exists(f'{cfg.internal.optical_background}') and\
+        cfg.input.use_optical_deblending:
         print_log(cfg,f"Creating the full FOV optical image for {cfg.sofia.original_data_cube}.",case= ['verbose'])
         creating_full_FOV_optical(cfg)
     
@@ -531,17 +636,17 @@ We will still use any cached tables if available in {cfg.directories.ancillary_d
         if cfg.input.use_optical_deblending:
             #Download the gaia table for the full FOV optical image
             try:
-                download_gaia_table(cfg)  
+                download_internet_table(cfg,archive= 'GAIA')  
             except Exception as e:
                 print_log(cfg, f"Failed to download Gaia table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['NED','ALL']:
             try:
-                download_ned_table(cfg)
+                download_internet_table(cfg,sources= sources, archive='NED')
             except Exception as e:
                 print_log(cfg, f"Failed to download NED table: {e}", case=['verbose','screen'])
         if cfg.input.internet_query.upper() in ['SIMBAD','ALL']:
             try:
-                download_simbad_table(cfg)
+                download_internet_table(cfg,sources= sources, archive='SIMBAD')
             except Exception as e:
                 print_log(cfg, f"Failed to download SIMBAD table: {e}", case=['verbose','screen'])  
               
@@ -557,8 +662,8 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
     # First check whether our optimal image is already available
     if not os.path.exists(f'{cfg.internal.optical_background}'):
         raise FileNotFoundError(f"The optical background image {cfg.internal.optical_background} does not exist. It should have been created by the function creating_full_FOV_optical.")
-    optical_image_header = fits.getheader(f'{cfg.internal.optical_background}')
-    wcs_opt = WCS(optical_image_header)
+    optical_image_header = get_fits_header(f'{cfg.internal.optical_background}')
+    wcs_opt = create_WCS(optical_image_header)
     pixel_scale = np.mean(abs(proj_plane_pixel_scales(wcs_opt)))*u.deg
     fwhm = 5./ pixel_scale.to(u.arcsec).value*2.31
     if fwhm > cfg.internal.optical_kernel_fwhm:
@@ -567,7 +672,7 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
        
          #lets check if the WCS matches the optical image
            
-        tmp = fits.getheader(f'{cfg.internal.cleaned_optical_background}',
+        tmp = get_fits_header(f'{cfg.internal.cleaned_optical_background}',
                              output_verify='ignore') 
         
        
@@ -608,9 +713,8 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
     # If we get here we have to clean our downloaded image    
     print_log(cfg,f"Preparing the background optical image for the deblending on optical sources.", case=['verbose'])
     #Astropy is such shitty programming that it is continously adapting stuff
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        wcs= WCS(data[0].header).celestial
+   
+    wcs = create_WCS(data[0].header).celestial
     hi_header = copy.deepcopy(data[0].header)
 
     
@@ -639,8 +743,8 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
     close_variables(gaia_mask,bckgrnd,bckgrnd_wcs)    
     if 'PREPARE_BACKGROUND_OPTICAL_IMAGE' in cfg.logging.debug_functions or\
         'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f'{cfg.logging.log_directory}/background_gaia_masked_debug_image_{cfg.internal.image_counter}.fits',
-            masked_bckgrnd,header=masked_bckgrnd_wcs.to_header(),overwrite=True)
+        write_fits_file(f'{cfg.logging.log_directory}/background_gaia_masked_debug_image_{cfg.internal.image_counter}.fits',
+            masked_bckgrnd,masked_bckgrnd_wcs.to_header(),overwrite=True)
         cfg.internal.image_counter += 1   
 
     # subtracting the background from the optical image
@@ -649,8 +753,8 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         masked_bckgrnd, masked_bckgrnd_wcs)
     if 'PREPARE_BACKGROUND_OPTICAL_IMAGE' in cfg.logging.debug_functions or\
         'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f'{cfg.logging.log_directory}/background_gaia_masked_mean_subtracted_debug_image_{cfg.internal.image_counter}.fits',
-            cleaned_optical_image,header=cleaned_optical_wcs.to_header(),overwrite=True)
+        write_fits_file(f'{cfg.logging.log_directory}/background_gaia_masked_mean_subtracted_debug_image_{cfg.internal.image_counter}.fits',
+            cleaned_optical_image,cleaned_optical_wcs.to_header(),overwrite=True)
         cfg.internal.image_counter += 1   
 
 
@@ -662,7 +766,6 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         int(3.*cfg.internal.optical_kernel_fwhm) % 2 == 0 else \
         int(3.*cfg.internal.optical_kernel_fwhm)
     ## feel free to adjust the following parameters for better source detection. ##
-    #threshold = detect_threshold(optical_image, nsigma=5,background= 0.0)
     print_log(cfg,f"Using a FWHM of {cfg.internal.optical_kernel_fwhm} pixels for the Gaussian kernel and a box size of {boxin} pixels for smoothing the optical image.", case=['verbose'])
     kernel = make_2dgaussian_kernel(cfg.internal.optical_kernel_fwhm, size=boxin)
     print_log(cfg,f"Smoothing the image", case=['verbose'])
@@ -679,8 +782,8 @@ def prepare_background_optical_image(cfg,data,source_id = 'unknown',outdir='./')
         final_optical_header['GAIA_MSK'] = False
     else:
         final_optical_header['GAIA_MSK'] = True
-    fits.writeto(cfg.internal.cleaned_optical_background, data_smooth, 
-                header=final_optical_header, overwrite=True, output_verify='ignore')
+    write_fits_file(cfg.internal.cleaned_optical_background, data_smooth, 
+        final_optical_header, overwrite=True, output_verify='ignore')
      
 
 def load_data(base_name=None,cube_name = None,
@@ -696,21 +799,21 @@ def load_data(base_name=None,cube_name = None,
     # load data
     if cube_name is None:
         try:
-            cube = fits.open(f"{indir}/{name}_cube.fits")
+            cube = open_fits_file(f"{indir}/{name}_cube.fits")
         except FileNotFoundError:
             cube = None
     else:
-        cube = fits.open(f"{cube_name}")
+        cube = open_fits_file(f"{cube_name}")
     if mask_name is None:
         try :
-            mask = fits.open(f"{indir}{name}_mask.fits")
+            mask = open_fits_file(f"{indir}{name}_mask.fits")
         except FileNotFoundError:
             mask = None
     else:
-        mask = fits.open(f"{mask_name}")
+        mask = open_fits_file(f"{mask_name}")
 
     if not mom0_name is None:
-        mom0 = fits.open(f"{mom0_name}")
+        mom0 = open_fits_file(f"{mom0_name}")
     else:
         mom0 = None
     return cube, mask, mom0
@@ -730,9 +833,9 @@ def obtain_final_mask(cfg,cube_name, results,outdir = './'):
 We will check if it is ok and if so we will apply it to the original mask.
 looking in {path} for the original mask {cfg.sofia.original_mask}''', case=['verbose'])
        
-        original_mask = fits.open(f'{path}/{cfg.sofia.original_mask}',
+        original_mask = open_fits_file(f'{path}/{cfg.sofia.original_mask}',
                                   do_not_scale_image_data=True)
-        twod_mask = fits.open(f"{outdir}deblended_moment0_mask_based_on_optical.fits"
+        twod_mask = open_fits_file(f"{outdir}deblended_moment0_mask_based_on_optical.fits"
             ,do_not_scale_image_data=True)
        
         final_mask_name = f"{outdir}deblended_moment0_mask_based_on_optical.fits"
@@ -754,7 +857,7 @@ looking in {path} for the original mask {cfg.sofia.original_mask}''', case=['ver
                 original_mask[0].scale('int32')
 
            
-                fits.writeto(f"{outdir}moment0_mask_based_on_optical.fits",
+                write_fits_file(f"{outdir}moment0_mask_based_on_optical.fits",
                     original_mask[0].data,original_mask[0].header,overwrite=True)
                
        
@@ -797,8 +900,8 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         markers_map = markers_map[0,:,:]
     if 'RUN_WATERSHED' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
         markers_data = np.asarray(markers) 
-        fits.writeto(f"{cfg.logging.log_directory}/markers_used_for_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
-            markers_data, header=header, overwrite=True)
+        write_fits_file(f"{cfg.logging.log_directory}/markers_used_for_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
+            markers_data, header, overwrite=True)
         cfg.internal.image_counter += 1
     if dimension == 3:
         watershed_output_1 = watershed_on_cut_cube(data_ext,markers,
@@ -812,11 +915,11 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
     print_log(cfg,f'completed initial watershed and found {np.unique(watershed_output_1)} segments ', 
         case=['verbose'])
     if 'RUN_WATERSHED' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/initial_watershed_mask_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
-            watershed_output_1, header=header, overwrite=True)
+        write_fits_file(f"{cfg.logging.log_directory}/initial_watershed_mask_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
+            watershed_output_1, header, overwrite=True)
         cfg.internal.image_counter += 1
     # clean markers that grow less than beam  pixels
-    pixel_scale = np.mean(abs(proj_plane_pixel_scales(WCS(header))))*u.deg
+    pixel_scale = np.mean(abs(proj_plane_pixel_scales(create_WCS(header))))*u.deg
    
     print_log(cfg,f"Pixel scale is {pixel_scale}. data header BEAM is {data_header['BMAJ']} {data_header['BMIN']}", 
               case=['debug'])
@@ -853,8 +956,8 @@ This means scaling the markers by {markers.shape[-1]/data.shape[-1]} to match th
         watershed_output_2 = watershed(-data_ext, markers, mask=np.abs(data_ext)>1e-7
             ,connectivity=2,compactness=cfg.input.compactness)
     if 'RUN_WATERSHED' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/second_watershed_mask_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
-            watershed_output_2, header=header, overwrite=True)
+        write_fits_file(f"{cfg.logging.log_directory}/second_watershed_mask_dimension_{dimension}_dbimage_{cfg.internal.image_counter}.fits",
+            watershed_output_2, header, overwrite=True)
         cfg.internal.image_counter += 1
     
    
@@ -878,8 +981,10 @@ def set_optical_markers(cfg,sofia_id, mask,outdir= None):
     if len(mask.shape) > 2:
         mask = np.nansum(mask, axis=0)
     # detect from the optical image
+   
     detected_optical_markers,detected_optical_markers_header,used_mask = \
         detect_optical_sources(cfg,mask=mask,source_id=sofia_id)
+  
     # and we want to add any source we know to exist
     if not cfg.input.manual_input_tables[0] is None:
         print_log(cfg, "Adding the manual optical source table.", case=['verbose'])
@@ -892,9 +997,9 @@ def set_optical_markers(cfg,sofia_id, mask,outdir= None):
         optical_markers = detected_optical_markers
 
     if 'SET_OPTICAL_MARKERS' in cfg.logging.debug_functions or 'ALL' in cfg.logging.debug_functions:
-        fits.writeto(f"{cfg.logging.log_directory}/optical_source_markers_debug_image_{cfg.internal.image_counter}.fits",
+        write_fits_file(f"{cfg.logging.log_directory}/optical_source_markers_debug_image_{cfg.internal.image_counter}.fits",
             optical_markers.data,
-            header=detected_optical_markers_header, overwrite=True)
+            detected_optical_markers_header, overwrite=True)
         cfg.internal.image_counter += 1 
 
     return optical_markers,detected_optical_markers_header 
@@ -903,8 +1008,8 @@ def set_optical_markers(cfg,sofia_id, mask,outdir= None):
 
 def update_original_mask(cfg, original_mask_name=None,final_mask_name=None, id=None):
     if original_mask_name is not None:
-        original_mask = fits.open(original_mask_name)
-        final_mask = fits.open(final_mask_name)
+        original_mask = open_fits_file(original_mask_name)
+        final_mask = open_fits_file(final_mask_name)
         original_mask_data = add_to_original(original_mask,final_mask,sofia_id=id)
 
         # Update the original mask with the new segmentation
@@ -951,7 +1056,7 @@ def watershed_deblending(cfg_in, cube_name = None,
             if os.path.isfile(file_path):
                 if file_path == cfg.internal.cleaned_optical_background:
                     if cfg.input.clear_internet_cache and optical_deblending:
-                        print_log(cfg, f"Removing the cleaned optical background image {file_path} because we are clearing the cache and want to use optical deblending.", case=['verbose','screen'])
+                        print_log(cfg, f"Removing the cleaned optical background image {file_path} because we are clearing the cache and want to use optical deblending.", case=['verbose'])
                         os.remove(file_path)
                 else:
                     os.remove(file_path)
@@ -968,8 +1073,8 @@ We start the watershed_deblending for the cube {cube_name}.''', case=['verbose',
     if 'SOF_DEB' in cube[0].header:
         if cube[0].header['SOF_DEB'] == True:
             print_log(cfg, f'''The cube {cube_name} has already been deblended. 
-We will not deblend it again as this lead to different and unreliable results.''', case=['verbose','screen'])
-            return max_source_id
+We will not deblend it again as this leads to different and unreliable results.''', case=['verbose','screen'])
+            return max_source_id, None
 
 
     results = { 'optical_moment0': [False, 0],
@@ -981,7 +1086,7 @@ We will not deblend it again as this lead to different and unreliable results.''
         # We first prepare the optical image
      
         print_log(cfg, f'Preparing the optical image for the cube {cfg.internal.cleaned_optical_background}. \n', 
-case=['verbose','screen'])
+case=['verbose'])
         if not os.path.exists(cfg.internal.cleaned_optical_background):
             prepare_background_optical_image(cfg,cube,source_id=sofia_id,outdir=outdir)
        
@@ -992,19 +1097,19 @@ case=['verbose','screen'])
         # optical image because it is not useful and can lead to oversegmentation
         if len(np.unique(optical_markers.data)) - 1 <= 1:
             print_log(cfg, f"We found {len(np.unique(optical_markers.data)) - 1} optical sources in the cube {cube_name} so we will not use the optical deblending results for the peak deblending.", 
-                case=['verbose','screen'])
+                case=['verbose'])
             # 1000 indicates 1 or less optical sources found so we shouldn't deblend
             # We require optical sources because if we simply deblend on the cube we can split anything
             results['optical_moment0'] = [False, 1000]
             results['optical_cube'] = [False, 1000]
         if moment0_deblending:          
             print_log(cfg, f'Running 2D deblending based on an optical image for mom0 = {mom0_name} \n', 
-                case=['verbose','screen'])
+                case=['verbose'])
             results['optical_moment0'] = deblend_on_optical(cfg,mom0,optical_markers,
                     outdir=outdir, source_id=sofia_id, optical_header=markers_header)
         if cube_deblending:
             print_log(cfg, f'Running 3D  deblending based on an optical image for cube {cube_name}. \n', 
-                case=['verbose','screen'])
+                case=['verbose'])
             cube_smooth = copy.deepcopy(cube)
             cube_smooth[0].data = freq_smooth(cube[0].data, smooth=4.0)
             results['optical_cube'] = deblend_on_optical(cfg,cube_smooth,optical_markers,
@@ -1028,7 +1133,7 @@ case=['verbose','screen'])
             print_log(cfg, f"Using the optical deblending mask {final_mask_name} for the peak deblending",
                 case=['verbose'])
             
-            tmp = fits.open(final_mask_name) 
+            tmp = open_fits_file(final_mask_name)
             previous_deblend = tmp[0].data
 
         else:
@@ -1041,11 +1146,11 @@ case=['verbose','screen'])
   
    
     print_log(cfg, f'''Final mask name: {final_mask_name}
-Which is based on the following deblending results: {results}''',case=['verbose','screen'])
+Which is based on the following deblending results: {results}''',case=['verbose'])
    
     sources_table = None
     if not final_mask_name is None:  
-        print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose','screen'])
+        print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose'])
         stil_split,sources_table = split_sources(cfg,cube_name, final_mask_name, 
             outdir=outdir,catalogue=cfg.logging.save_counterpart_table)  
         # skip the background
@@ -1091,7 +1196,7 @@ def create_final_mask(cfg, input_mask_name=None, max_source_id=1, sofia_source_i
                       outdir='./'):
     """ Create the final mask for the deblended sources."""
     if input_mask_name is not None:
-        input_mask = fits.open(f'{outdir}{input_mask_name}')
+        input_mask = open_fits_file(f'{outdir}{input_mask_name}')
         ids_in_mask = [int(x) for x in np.unique(input_mask[0].data) if int(x) != 0]
        
         print_log(cfg, f'Found {len(ids_in_mask)} unique IDs in the input mask.')

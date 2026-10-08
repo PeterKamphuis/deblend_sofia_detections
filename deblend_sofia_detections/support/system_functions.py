@@ -5,6 +5,8 @@ from deblend_sofia_detections.support.errors import InputError
 import os
 import time
 
+
+
 def create_directory(directory,base_directory=None):
     split_directory = [x for x in directory.split('/') if x]
     split_directory_clean = [x for x in directory.split('/') if x]
@@ -77,3 +79,4 @@ def join_path(*args):
         ini = ini + '/'
     
     return ini
+
