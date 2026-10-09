@@ -26,6 +26,7 @@ import warnings
 import numpy as np
 import pickle
 import random
+import copy
 import itertools
 from threading import Lock, get_ident
 from contextlib import contextmanager
@@ -310,6 +311,8 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         query_object = Simbad()  
         if cfg.internal.simbad_table.lower() == 'none':
             search = True
+
+            
         query_function = query_simbad_with_retries
         Simbad.TIMEOUT = 600
         max_chunk_size = 150.0 * u.arcmin
@@ -328,14 +331,32 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         query_function = query_gaia_with_retries
         if cfg.internal.gaia_table.lower() == 'none':
             search = True
+
+    if not search:
+        #check that the cached table is not empty
+        with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','rb') as tmp:
+            print(f'Loading cached {archive.lower()} table from {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+            cached_table = pickle.load(tmp)
+        try:
+            if check_table_length(cached_table) == 0:
+                search = True
+            del cached_table
+        except:
+             search = True
         
+
+
     # we are only running this if the user wants downloads
     if search:
+        # let's avoid mix ups if we  download we first remove
+        if os.path.exists(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl'):
+            os.remove(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
         if runtime_ctx is None:
             internet_query_gate = _NULL_GATE
         else:
             internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
         sky_coords, size_in_arcmin, size_pixels,image_boundaries = get_cutout_region(cfg)
+        
         print_log(cfg,f"Querying {archive} with the new query sources in the image area, this may take some time...",case=['main'])  
       
         internet_table = None
@@ -344,6 +365,7 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
             cfg, sky_coords, size_in_arcmin, max_chunk_size,
             query_function, (cfg, query_object, query_errors), archive.upper(),
             internet_query_gate=internet_query_gate,sources=sources)
+        
 
         if internet_table is not None:
             print_log(cfg, f'{archive} query completed with {check_table_length(internet_table)} results', 
@@ -370,15 +392,29 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
             filter_keys = [x for x in ['main id', 'RA', 'DEC'] if x in internet_table.colnames]
         else:
             filter_keys = ['RA', 'DEC']
+        
         if len(filter_keys) > 0:
             internet_table = unique(internet_table, keys=filter_keys)   
 
        
         #remove the ones that are ouside the cutout region
-        internet_table = internet_table[(internet_table['RA'] >= image_boundaries['ra_min']) 
-            & (internet_table['RA'] <= image_boundaries['ra_max']) &
-            (internet_table['DEC'] >= image_boundaries['dec_min']) & 
-            (internet_table['DEC'] <= image_boundaries['dec_max'])]
+        tmp =copy.deepcopy(internet_table)
+       
+        internet_table = tmp[(tmp['RA'] >= image_boundaries['ra_min']) 
+            & (tmp['RA'] <= image_boundaries['ra_max']) &
+            (tmp['DEC'] >= image_boundaries['dec_min']) & 
+            (tmp['DEC'] <= image_boundaries['dec_max'])]
+
+        if check_table_length(internet_table) == 0:
+            if image_boundaries['ra_min'] < 0.:
+                image_boundaries['ra_min'] = image_boundaries['ra_min'] + 360.0*u.deg
+                image_boundaries['ra_max'] = image_boundaries['ra_max'] + 360.0*u.deg
+                internet_table = tmp[(tmp['RA'] >= image_boundaries['ra_min']) 
+                            & (tmp['RA'] <= image_boundaries['ra_max']) &
+                            (tmp['DEC'] >= image_boundaries['dec_min']) & 
+                            (tmp['DEC'] <= image_boundaries['dec_max'])]
+            
+        del tmp
         
         # Astropy is so stupid that it does not provide a QTable from the query
         # so we have to do this as well. 
@@ -422,10 +458,17 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         else:
             search_table = internet_table
         #select out the galaxies
-        print_log(cfg, f'Caching {archive.lower()} table to {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl', case=['verbose'])          
-        with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','wb') as tmp:
-             pickle.dump(search_table,tmp) 
-        setattr(cfg.internal, f'{archive.lower()}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+        if check_table_length(search_table) > 0:
+            #Do not cahce empty tables.
+            print_log(cfg, f'Caching {archive.lower()} table to {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl', case=['verbose'])          
+            with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','wb') as tmp:
+                 pickle.dump(search_table,tmp) 
+            setattr(cfg.internal, f'{archive.lower()}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+        else:
+            setattr(cfg.internal, f'{archive.lower()}_table', f'none')
+            print_log(cfg, f'Not caching empty {archive.lower()} table', case=['verbose'])
+            
+   
     download_end = datetime.now()
     print_log(cfg, f'Finished {archive} table download at {download_end}', case=['verbose','screen'])
     print_log(cfg, f'Total time taken: {download_end - download_start}', case=['verbose','screen'])
