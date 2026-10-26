@@ -9,36 +9,6 @@ However, to ensure greater control on the deblending process there are optional 
 These parameters can also be specified on the command line and will override the values in the .yml file.
 The .yml file will overwrite the defaults and not all parameters need to be listed.
 
-
-
-
-  
-#These are only for internal code book keeping
-@dataclass
-class Internal:
-    image_counter: int = 0
-    optical_background: str = MISSING
-    cleaned_optical_background: str = MISSING
-    optical_kernel_fwhm: float = 3.
-    sofia: str = 'sofia'
-    input_log_directory: str = MISSING
-    input_log_file: str = MISSING
-    gaia_table: str = 'none'
-    ned_table: str = 'none'
-    simbad_table: str = 'none'
-    cube_ext: str = '.fits'
-    weights: List[float] = field(default_factory=lambda: [4., 10.]) #weights in arcsec, km/s
-    
-@dataclass
-class defaults:
-   
-   
-    general: General = field(default_factory = General)
-    directories: Directories = field(default_factory = Directories)
-    internal: Internal = field(default_factory = Internal)
-    sofia: Sofia = field(default_factory = Sofia)
-    logging: Logging = field(default_factory = Logging)
-
 Standalone Keywords
 -------------------
 *These keyword do not take any prefix*

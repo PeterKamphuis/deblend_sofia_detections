@@ -26,16 +26,16 @@ def setup_config(argv,single_cube=False):
     if '-v' in argv or '--version' in argv:
         print(f"This is version {deblend_sofia_detections.__version__} of the program.")
         sys.exit()
-
-    if '-h' in argv or '--help' in argv:
+   
+    if '-h' in argv or '--help' in argv or len(argv) == 0:
         print('''
 Use package_name in this way:
 
 All config parameters can be set directly from the command line by setting the correct parameters, e.g:
-create_package_name def_file=cube.fits error_generator=tirshaker 
+deblend configuration_file=<Your_Input.yml>
 ''')
         sys.exit()
-
+   
 
     cfg = OmegaConf.structured(defaults)
     if cfg.general.ncpu == psutil.cpu_count():
