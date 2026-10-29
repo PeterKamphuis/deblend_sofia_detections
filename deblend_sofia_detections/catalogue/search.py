@@ -7,11 +7,9 @@ from deblend_sofia_detections.support.support_functions import convertRADEC,\
     isquantity, get_nan_for_dtype,calculate_projected_distance,close_variables,\
     get_channel_width,get_ned_requested_metadata,open_fits_file
 from deblend_sofia_detections.support.logging import print_log
-from deblend_sofia_detections.support.constants import C,rest_HI
-from deblend_sofia_detections.support.system_functions import join_path
+
 
 from astropy.table import QTable,Table,vstack
-from datetime import datetime
 import astropy.units as u
 import copy
 import numpy as np
@@ -51,7 +49,7 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
         with open(f'{cfg.internal.simbad_table}', 'rb') as tmp:
             search_table = pickle.load(tmp)
     elif table_source.upper() == 'MANUAL':
-        if cfg.input.manual_input_tables[0] is None:
+        if cfg.input.tables[0] is None:
             return  QTable()
         search_table = read_manual_table(cfg)
        
@@ -65,7 +63,7 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
             
     coordinates = [source[f'{prefix}ra'],source[f'{prefix}dec']]
     vsys, radius = set_search_radius(cfg,source,header_info,sysrange,
-        counterpart_region=cfg.input.counterpart_region)
+        counterpart_region=cfg.general.counterpart_region)
     
     search_table = sort_on_distance(cfg,search_table, coordinates,
         vsys,header_info=header_info,spectroscopic=spectroscopic)
@@ -118,11 +116,11 @@ def search_counter_part(cfg,source,sofia_directory= './',
     input_dir = f'{sofia_directory}/{basename}_cubelets'
     
     cube = open_fits_file(f'{input_dir}/{basename}_{inid}_cube.fits',\
-        output_verify='warn')
-    header_info= {'BMAJ':float(cube[0].header['BMAJ'])*u.deg,
-                'pixelsize': float(np.mean([abs(cube[0].header['CDELT1']),
-                    abs(cube[0].header['CDELT2'])]))*u.deg,
-                'channel_width': get_channel_width(cube[0].header,velocity=True) 
+        single_hdu=True,output_verify='warn')
+    header_info= {'BMAJ':float(cube.header['BMAJ'])*u.deg,
+                'pixelsize': float(np.mean([abs(cube.header['CDELT1']),
+                    abs(cube.header['CDELT2'])]))*u.deg,
+                'channel_width': get_channel_width(cube.header,velocity=True) 
                 }
    
     # first try a spectroscopic match
@@ -145,7 +143,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 warnings.simplefilter("ignore")
                 spectroscopic_table = vstack([spectroscopic_table_ned, spectroscopic_table_simbad])
             vsys, radius = set_search_radius(cfg,source,header_info,150.*u.km/u.s,
-                counterpart_region=cfg.input.counterpart_region)
+                counterpart_region=cfg.general.counterpart_region)
             coord = [source[f'ra'],source[f'dec']]
             spectroscopic_table = sort_on_distance(cfg,spectroscopic_table, 
                 coord,vsys,header_info=header_info)
@@ -162,7 +160,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
     elif query.upper() == 'MANUAL':
         spectroscopic_table = find_counterpart(cfg,source, header_info,
             sysrange=150.*u.km/u.s,table_source='MANUAL',
-            spectroscopic=cfg.input.spectroscopic_manual_counterparts)
+            spectroscopic=cfg.general.spectroscopic_manual_counterparts)
         search_id = 'Manual'
         pref = 'sofia_'
         
@@ -185,7 +183,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 get_ned_requested_metadata(include_extra=True)
         
         if query.upper() == 'MANUAL':
-            if cfg.input.manual_input_tables[0] is None:
+            if cfg.input.tables[0] is None:
                 manual_table = QTable(names=['Object Name'],dtype=['str'])
             else:
                 manual_table = read_manual_table(cfg,need_velocity=True)

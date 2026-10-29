@@ -173,10 +173,10 @@ def creating_full_FOV_optical(cfg):
 
     obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,
         mom0_header=mom0_header,mom0_wcs=mom0_wcs)
-    if not cfg.input.manual_optical_image[0] is None:
+    if not cfg.input.optical_images[0] is None:
         
         print_log(cfg, f'Checking manual input', case=['verbose'])
-        for identifier in cfg.input.manual_optical_image:
+        for identifier in cfg.input.optical_images:
             if os.path.isfile(identifier):
                 print_log(cfg, f'Found manual optical image: {identifier}', case=['verbose'])
             manual_path,manual_file = os.path.split(identifier)
@@ -196,7 +196,7 @@ object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''', case=['verbose'])
     
-    if cfg.input.clear_internet_cache:
+    if cfg.general.clear_internet_cache:
         SkyView.clear_cache()
     sky_view_list = SkyView.get_image_list(position=obj_coords,
                                 radius = size_quantity,
@@ -316,7 +316,7 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         query_function = query_simbad_with_retries
         Simbad.TIMEOUT = 600
         max_chunk_size = 150.0 * u.arcmin
-        if cfg.input.clear_internet_cache:
+        if cfg.general.clear_internet_cache:
             Simbad.clear_cache()
     elif archive.upper() == 'NED':
         query_object = LW_NedQuery()
