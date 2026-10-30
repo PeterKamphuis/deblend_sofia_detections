@@ -14,13 +14,14 @@ Standalone Keywords
 *These keyword do not take any prefix*
 
 **print_examples**
-  *bool, optional, default = False*
+ 
+ *bool, optional, default = False*
 
   If true the code will print out examples of the .yml file and the .par file and then exit. 
 
 **configuration_file**:
   
-  *str, optional, default = deblend_sofia_detections.yml*
+ *str, optional, default = deblend_sofia_detections.yml*
 
   The name of the configuration file to use. If there is no path it is assumed to be in the run directory. 
   logically this parameter only works from the command line and not from the .yml file which it specifies.
@@ -58,8 +59,8 @@ Input Keywords
 
     g) #no HI peaks: Get markers at the highest HI peaks.
     
-  In the #no is an integer specifying the number of HI peaks to use as markers. To reproduce the 
-  original results from Qifeng+ 2025 One would set input.markers: ['Internet Image', '5 HI peaks'] which would make
+  In which #no is an integer specifying the number of HI peaks to use as markers. To reproduce the 
+  original results from Qifeng+ 2025 one would set input.markers: ['Internet Image', '5 HI peaks'] which would make
   deblend_sofia_detections first use the optical markers from the internet image and then deblend based on the 5 HI peaks.
  
 
@@ -80,7 +81,7 @@ Input Keywords
 
 **optical_images**:
 
-  *list of str, optional, default= [None]*
+ *list of str, optional, default= [None]*
 
   A list of optical images to use for the deblending process. If not specified, images will be used downloaded from SkyView. This can be useful if the user has better optical images than the DSS ones or if they want to use different wavelength ranges for the optical images.
   The images should be in the run_directory the ancillary_directory or the data_directory or be provided with the full path.  
@@ -89,7 +90,7 @@ Input Keywords
 
 **marker_images**:
 
- *List, optional, default = [None]*
+ *list of str, optional, default = [None]*
 
   For more complex arrangements we can provide a direct marker image for the deblending.
   If not specified, no direct marker images will be used.
@@ -97,7 +98,7 @@ Input Keywords
 
 **gaia_credentials**:
 
- *List[str], optional, default = ['NONE','NONE']*
+ *list of str, optional, default = ['NONE','NONE']*
 
   The credentials to use for logging into the Gaia archive. By default it is set to ['NONE','NONE'], which means no credentials are used and we do not login.
   Unfortunately, logging in does not appear to speed up the download.
@@ -128,7 +129,7 @@ General Keywords
 
 **deblend_dimension**:
 
-  *str, optional, default = '3D'*
+ *str, optional, default = '3D'*
 
   The dimension of the file to be deblended. Options are '2D' for two-dimensional images (i.e., moment0)
   and '3D' for three-dimensional data cube deblending.
