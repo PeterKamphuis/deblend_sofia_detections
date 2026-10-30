@@ -492,8 +492,8 @@ def mark_as_deblended(cfg,sofia_directory=None,sofia_basename=None):
         print_log(cfg,f'Marking {f} as deblended',case=['verbose'])
         cube_name = f'{sofia_directory}/{sofia_basename}_cubelets/{f}'
 
-        with open_fits_file(cube_name, mode='update') as file:
-            file[0].header['SOF_DEB'] = True
+        with open_fits_file(cube_name, mode='update') as fitsfile:
+            fitsfile[0].header['SOF_DEB'] = True
             
   
 def set_sofia(sofia_temp, cube_name, mask, outdir):

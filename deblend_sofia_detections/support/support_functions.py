@@ -353,6 +353,7 @@ def match_size(matcharray, inarray,max=False):
     inarray (np.ndarray): The array we want to regrid.
     Returns:
     np.ndarray: The regridded array with the same shape as matcharray.
+    This implicitly assumes that the arrays covers the same sky area but has different pixel scales.
     """
 
     if matcharray.shape == inarray.shape:
@@ -412,10 +413,15 @@ def read_unit_part(input_string,transform_in):
     
     return proc_unit,proc_transform,proc_power,remainder
 
-def open_fits_file(filename,**kwargs):
+def open_fits_file(filename,single_hdu=False,**kwargs):
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return fits.open(filename, **kwargs)
+        data = fits.open(filename, **kwargs)
+      
+        if single_hdu:
+            if isinstance(data, fits.HDUList):
+                data = data[0]
+        return data
     
 def regrid_array(oldarray, Out_Shape,max = False):
     oldshape = np.array(oldarray.shape)

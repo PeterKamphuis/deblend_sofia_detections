@@ -287,7 +287,7 @@ def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
     else:           
         pickle_file = f'{table_base}.pkl'   
     
-    if (not (fresh_read or cfg.input.original_tables) and os.path.exists(pickle_file)): 
+    if (not (fresh_read or cfg.general.originals) and os.path.exists(pickle_file)): 
         with open(pickle_file,'rb') as tmp:
             table = pickle.load(tmp)
         if type(table) != QTable:
@@ -309,8 +309,8 @@ def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
 
 def read_manual_table(cfg, need_velocity =True):    
     manual_table = None
-    for table_in in cfg.input.manual_input_tables:
-        if table_in is None:
+    for table_in in cfg.input.tables:
+        if table_in.lower() == 'none':
             manual_table = QTable()
             continue
         if not os.path.isfile(table_in):
@@ -323,6 +323,8 @@ def read_manual_table(cfg, need_velocity =True):
             manual_table = manual_table_small
         else:
             manual_table = combine_tables(manual_table,manual_table_small)  
+    if check_table_length(manual_table) == 0:
+        return manual_table
     
     if 'velocity' not in [x.lower() for x in manual_table.colnames]\
         and need_velocity:

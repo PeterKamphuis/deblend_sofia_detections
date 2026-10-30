@@ -26,6 +26,7 @@ import warnings
 import numpy as np
 import pickle
 import random
+import copy
 import itertools
 from threading import Lock, get_ident
 from contextlib import contextmanager
@@ -159,6 +160,7 @@ def build_source_chunks(cfg, sources, max_chunk_size):
 
 def creating_full_FOV_optical(cfg):
     cfFOV_start =  datetime.now() 
+    markers = set([x.lower() for x in cfg.input.markers])
     print_log(cfg, f'Starting full FOV optical image creation at {cfFOV_start}', case=['verbose','screen'])
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
@@ -172,10 +174,11 @@ def creating_full_FOV_optical(cfg):
 
     obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,
         mom0_header=mom0_header,mom0_wcs=mom0_wcs)
-    if not cfg.input.manual_optical_image[0] is None:
-        
+    #------------------if we have manual images we use these------------------
+    manual_images = set(['optical image', 'cleaned optical image'])
+    if len(markers.intersection(manual_images)) > 0:      
         print_log(cfg, f'Checking manual input', case=['verbose'])
-        for identifier in cfg.input.manual_optical_image:
+        for identifier in cfg.input.optical_images:
             if os.path.isfile(identifier):
                 print_log(cfg, f'Found manual optical image: {identifier}', case=['verbose'])
             manual_path,manual_file = os.path.split(identifier)
@@ -188,55 +191,53 @@ def creating_full_FOV_optical(cfg):
             cutout_hdr = cutout.wcs.to_header()
             cutout_hdr['COMMENT'] =  f'The original file was  {identifier}'
             write_fits_file(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
-
-            return
-    print_log(cfg, f'''Obtaining the actual image list with the following parameters:
+    #----------------------- Internet image retrieval -----------------------
+    if 'internet image' in markers:
+        print_log(cfg, f'''Obtaining the actual image list with the following parameters:
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''', case=['verbose'])
-    
-    if cfg.input.clear_internet_cache:
-        SkyView.clear_cache()
-    sky_view_list = SkyView.get_image_list(position=obj_coords,
-                                radius = size_quantity,
-                                coordinates = "J2000",
-                                pixels = size_pixels,
-                                cache=True,
-                                #survey=['WISE 3.4'])
-                                #survey=['2MASS-K'])
-                                survey=['DSS2 Red'])
+        
+        if cfg.general.clear_internet_cache:
+            SkyView.clear_cache()
+        print_log(cfg, f'Getting image from {cfg.general.sky_survey}', case=['verbose','screen'])
+        sky_view_list = SkyView.get_image_list(position=obj_coords,
+                                    radius = size_quantity,
+                                    coordinates = "J2000",
+                                    pixels = size_pixels,
+                                    cache=True,
+                                    survey=list(cfg.general.sky_survey))
 
 
-    print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
-{sky_view_list}
-''', case=['verbose'])
-    for path in sky_view_list:
-        print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
+        print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
+    {sky_view_list}
+    ''', case=['verbose'])
+        for path in sky_view_list:
+            print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
 This can take a while.''', case=['verbose'])
-        filename = path.split("/")[-1]
-        print_log(cfg, f'Downloading {filename} from SkyView from {path}')
-        urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
-        if os.path.isfile(f'{cfg.internal.optical_background}'):
-            print_log(cfg, "Successfully downloaded the image")
-            #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
-        else:
-            print_log(cfg, "Failed to obtain the image from SkyView")
-            raise DownloadError(f'''Failed to download the image from SkyView: {path}
+            filename = path.split("/")[-1]
+            print_log(cfg, f'Downloading {filename} from SkyView from {path}')
+            urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
+            if os.path.isfile(f'{cfg.internal.optical_background}'):
+                print_log(cfg, "Successfully downloaded the image")
+                #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
+            else:
+                print_log(cfg, "Failed to obtain the image from SkyView")
+                raise DownloadError(f'''Failed to download the image from SkyView: {path}
 Check your internet connection and the SkyView service status.
 Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.
 ''')
     cfFOV_end = datetime.now()
     print_log(cfg, f'Finished full FOV optical image creation at {cfFOV_end}', case=['verbose','screen'])
     print_log(cfg, f'Total time taken: {cfFOV_end - cfFOV_start}', case=['verbose','screen'])
-
+'''
 def gaia_query_with_retries(coord,size):
 
-    query = f'''SELECT ra,dec,phot_rp_mean_mag FROM gaiadr3.gaia_source 
+    query = f''SELECT ra,dec,phot_rp_mean_mag FROM gaiadr3.gaia_source 
 WHERE ra BETWEEN 180 AND 180.2 AND dec BETWEEN 10.1 AND 10.3 ORDER BY 
-phot_rp_mean_mag'''
+phot_rp_mean_mag''
     job = Gaia.launch_job(query,dump_to_file=False)
 
-'''
 def download_gaia_table(cfg,runtime_ctx=None):
     dgf_start = datetime.now()
     print_log(cfg, f'Starting Gaia table download at {dgf_start}', case=['verbose','screen'])
@@ -310,10 +311,12 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         query_object = Simbad()  
         if cfg.internal.simbad_table.lower() == 'none':
             search = True
+
+            
         query_function = query_simbad_with_retries
         Simbad.TIMEOUT = 600
         max_chunk_size = 150.0 * u.arcmin
-        if cfg.input.clear_internet_cache:
+        if cfg.general.clear_internet_cache:
             Simbad.clear_cache()
     elif archive.upper() == 'NED':
         query_object = LW_NedQuery()
@@ -328,14 +331,32 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         query_function = query_gaia_with_retries
         if cfg.internal.gaia_table.lower() == 'none':
             search = True
+
+    if not search:
+        #check that the cached table is not empty
+        with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','rb') as tmp:
+            print(f'Loading cached {archive.lower()} table from {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+            cached_table = pickle.load(tmp)
+        try:
+            if check_table_length(cached_table) == 0:
+                search = True
+            del cached_table
+        except:
+             search = True
         
+
+
     # we are only running this if the user wants downloads
     if search:
+        # let's avoid mix ups if we  download we first remove
+        if os.path.exists(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl'):
+            os.remove(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
         if runtime_ctx is None:
             internet_query_gate = _NULL_GATE
         else:
             internet_query_gate = runtime_ctx.get('internet_query_gate', _NULL_GATE)
         sky_coords, size_in_arcmin, size_pixels,image_boundaries = get_cutout_region(cfg)
+        
         print_log(cfg,f"Querying {archive} with the new query sources in the image area, this may take some time...",case=['main'])  
       
         internet_table = None
@@ -344,6 +365,7 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
             cfg, sky_coords, size_in_arcmin, max_chunk_size,
             query_function, (cfg, query_object, query_errors), archive.upper(),
             internet_query_gate=internet_query_gate,sources=sources)
+        
 
         if internet_table is not None:
             print_log(cfg, f'{archive} query completed with {check_table_length(internet_table)} results', 
@@ -370,15 +392,29 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
             filter_keys = [x for x in ['main id', 'RA', 'DEC'] if x in internet_table.colnames]
         else:
             filter_keys = ['RA', 'DEC']
+        
         if len(filter_keys) > 0:
             internet_table = unique(internet_table, keys=filter_keys)   
 
        
         #remove the ones that are ouside the cutout region
-        internet_table = internet_table[(internet_table['RA'] >= image_boundaries['ra_min']) 
-            & (internet_table['RA'] <= image_boundaries['ra_max']) &
-            (internet_table['DEC'] >= image_boundaries['dec_min']) & 
-            (internet_table['DEC'] <= image_boundaries['dec_max'])]
+        tmp =copy.deepcopy(internet_table)
+       
+        internet_table = tmp[(tmp['RA'] >= image_boundaries['ra_min']) 
+            & (tmp['RA'] <= image_boundaries['ra_max']) &
+            (tmp['DEC'] >= image_boundaries['dec_min']) & 
+            (tmp['DEC'] <= image_boundaries['dec_max'])]
+
+        if check_table_length(internet_table) == 0:
+            if image_boundaries['ra_min'] < 0.:
+                image_boundaries['ra_min'] = image_boundaries['ra_min'] + 360.0*u.deg
+                image_boundaries['ra_max'] = image_boundaries['ra_max'] + 360.0*u.deg
+                internet_table = tmp[(tmp['RA'] >= image_boundaries['ra_min']) 
+                            & (tmp['RA'] <= image_boundaries['ra_max']) &
+                            (tmp['DEC'] >= image_boundaries['dec_min']) & 
+                            (tmp['DEC'] <= image_boundaries['dec_max'])]
+            
+        del tmp
         
         # Astropy is so stupid that it does not provide a QTable from the query
         # so we have to do this as well. 
@@ -422,10 +458,17 @@ def download_internet_table(cfg, sources=None, runtime_ctx=None, archive= 'NED')
         else:
             search_table = internet_table
         #select out the galaxies
-        print_log(cfg, f'Caching {archive.lower()} table to {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl', case=['verbose'])          
-        with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','wb') as tmp:
-             pickle.dump(search_table,tmp) 
-        setattr(cfg.internal, f'{archive.lower()}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+        if check_table_length(search_table) > 0:
+            #Do not cahce empty tables.
+            print_log(cfg, f'Caching {archive.lower()} table to {cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl', case=['verbose'])          
+            with open(f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl','wb') as tmp:
+                 pickle.dump(search_table,tmp) 
+            setattr(cfg.internal, f'{archive.lower()}_table', f'{cfg.directories.ancillary_directory}/tables/cached_{archive.lower()}_table.pkl')
+        else:
+            setattr(cfg.internal, f'{archive.lower()}_table', f'none')
+            print_log(cfg, f'Not caching empty {archive.lower()} table', case=['verbose'])
+            
+   
     download_end = datetime.now()
     print_log(cfg, f'Finished {archive} table download at {download_end}', case=['verbose','screen'])
     print_log(cfg, f'Total time taken: {download_end - download_start}', case=['verbose','screen'])

@@ -57,52 +57,7 @@ def filter_peaks(cfg,maxima,npeaks=np.inf,previous_deblend=None):
             "mask_values": mask_values,
         }
     )  
-    '''
-    print(f'We found {peak_table} peaks in the cubelet')
-    z_peaks = []
-    y_peaks = []
-    x_peaks = []
-    mask_values = []
-    peak_values = []
-    for peaks in maxima:
-        if previous_deblend is not None:
-            if not np.isnan(previous_deblend[int(peaks[0]),int(peaks[1]),int(peaks[2])]):
-            # if we have a previous deblend we use the mean of the previous deblend
-            # in the vicinity of the peak to determine the current source
-                # this is to avoid that we have a lot of sources with only one pixel
-                # which is not what we want
-                # We use the mean of the previous deblend in the vicinity of the peak
-                current = previous_deblend[int(peaks[0]),int(peaks[1]),int(peaks[2])]
-               
-                print_log(cfg,f"Using previous deblend value {current} for peak {peaks}"
-                    ,case=['verbose'])
-                if current in mask_values:
-                    current = 0.
-            else:
-                current = 0.
-        else:
-            if len(mask_values) == 0:
-                current = 1
-            else:
-                current = np.max(mask_values)+1
-
-        if current != 0.:
-            mask_values.append(current)
-            peak_values.append(peaks[3])
-            z_peaks.append(int(peaks[0]))
-            y_peaks.append(int(peaks[1]))
-            x_peaks.append(int(peaks[2]))
-        if len(mask_values) >= npeaks:
-            break
-
    
-    meta = {'version': report_version(),}
-    colnames = ['z_peak', 'y_peak', 'x_peak', 'peak_value', 'mask_values']
-    coldata = [z_peaks, y_peaks, x_peaks, peak_values,mask_values]
-    table = QTable(coldata, names=colnames, meta=meta)
-    print(f'We found {table} the old table')
-    exit()
-    '''
     return peak_table
 
 def chunked_iterable(iterable, size):

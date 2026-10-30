@@ -9,7 +9,7 @@ from deblend_sofia_detections.support.system_functions import \
     create_directory
 from deblend_sofia_detections.support.support_functions import \
     close_variables,get_channel_width,open_fits_file,create_WCS,write_fits_file,\
-    get_fits_header
+    get_fits_header,match_size
 from deblend_sofia_detections.support.table_functions import check_table_length,\
     check_columns_dtype
 from deblend_sofia_detections.support.logging import print_log
@@ -21,6 +21,7 @@ from astropy.coordinates import SkyCoord
 from astropy.nddata import Cutout2D
 from astropy.nddata.utils import NoOverlapError
 from astropy.table import QTable
+from astropy.wcs import WCS
 from astropy.wcs.utils import proj_plane_pixel_scales
 from multiprocessing import Pool
 from concurrent.futures import ThreadPoolExecutor
@@ -41,34 +42,93 @@ import warnings
 
 
 def add_to_original(original_data, cut_data,sofia_id = 1):
-    original_wcs = create_WCS(original_data[0].header)
-    cut_wcs = create_WCS(cut_data[0].header)
+    original_wcs = create_WCS(original_data.header)
+    cut_wcs = create_WCS(cut_data.header)
     cut_origin = cut_wcs.wcs_pix2world(0,0,0,1)
     original_coord = original_wcs.wcs_world2pix(*cut_origin,1.)
-    expanded_new = np.zeros_like(original_data[0].data)
-    expanded_new[int(original_coord[2]):int(original_coord[2])+cut_data[0].data.shape[0],
-              int(original_coord[1]):int(original_coord[1])+cut_data[0].data.shape[1],
-              int(original_coord[0]):int(original_coord[0])+cut_data[0].data.shape[2]] = cut_data[0].data
-    original_data[0].data[original_data[0].data == int(sofia_id)] = 0
-    original_data[0].data[expanded_new > 0] = expanded_new[expanded_new > 0]
+    expanded_new = np.zeros_like(original_data.data)
+    expanded_new[int(original_coord[2]):int(original_coord[2])+cut_data.data.shape[0],
+              int(original_coord[1]):int(original_coord[1])+cut_data.data.shape[1],
+              int(original_coord[0]):int(original_coord[0])+cut_data.data.shape[2]] = cut_data.data
+    original_data.data[original_data.data == int(sofia_id)] = 0
+    original_data.data[expanded_new > 0] = expanded_new[expanded_new > 0]
     return original_data
 
+def combine_marker_images(marker_image_1, marker_image_2, mode='add'):
+    '''Combine marker images either by adding or replacing.
+    When mode is 'add', overlapping sources are grown to represent a single marker.
+    When mode is 'replace', in overlapping sources the source in the second image completely replaces the first one, i.e., 
+    we assume that the marker images cover the same sky area but may have different pixel scales.
+    '''
 
+    #Split data and headers
+  
+    header_1 = marker_image_1.header
+    data_1 = marker_image_1.data
+    header_2 = marker_image_2.header
+    data_2 = marker_image_2.data
+  
+    if data_1.shape != data_2.shape:
+        # Make sure both images use the smallest pixel scale before combining.    
+        scale_1 = proj_plane_pixel_scales(create_WCS(header_1).celestial)
+        scale_2 = proj_plane_pixel_scales(create_WCS(header_2).celestial)
+        if np.mean(scale_2) < np.mean(scale_1):
+            data_1 = match_size(data_2, data_1, max=True)
+            out_image = marker_image_2
+        else:
+            data_2 = match_size(data_1, data_2, max=True)
+            out_image = marker_image_1
+    source_1 = np.unique(data_1[data_1 > 0]).astype(np.int64)
+    source_2 = np.unique(data_2[data_2 > 0]).astype(np.int64)
+    same_source_ids = np.intersect1d(source_1, source_2)
+    if len(same_source_ids) > 0:
+        print_log(cfg,f"The following source IDs are present in both images: {same_source_ids}")
+        start_marker = np.nanmax([source_1, source_2])
+        for source_id in same_source_ids:
+            start_marker += 1
+            data_2[data_2 == source_id] = start_marker
+        source_2 = np.unique(data_2[data_2 > 0]).astype(np.int64)
+    # Determine which markers overlap in pixel coordinates (ignore background=0).
+    overlap_mask = (data_1 > 0) & (data_2 > 0)
+    overlap_pairs = np.empty((0, 2), dtype=np.int64)
+    if np.any(overlap_mask):
+        overlap_pairs = np.unique(
+            np.column_stack((data_1[overlap_mask], data_2[overlap_mask])),
+            axis=0
+        )
+
+    
+    if mode == 'add':
+        combined_data = data_1.copy()
+        for source_id_2 in source_2.astype(int):
+            source_2_mask = data_2 == source_id_2
+            if source_id_2 in same_source_ids:
+                target_id = source_id_2[0]
+            combined_data[source_2_mask] = target_id
+    elif mode == 'replace':
+        combined_data = data_1.copy()
+        if overlap_pairs.shape[0] > 0:
+            overlap_ids_data_1 = np.unique(overlap_pairs[:, 0])
+            combined_data[np.isin(combined_data, overlap_ids_data_1)] = 0
+        data_2_mask = data_2 > 0
+        combined_data[data_2_mask] = data_2[data_2_mask]
+    else:
+        raise ValueError(f"Unsupported mode: {mode}")
+    try:
+        out_image.data = combined_data
+    except Exception as e:
+        print(f"Error updating output image data: {e}")
+        raise RuntimeError(f"Error updating output image data: {e}")
+    return out_image
 
 def cut_optical(cfg,hdr_over,wcs,imdir,image):
     '''Cut out the optical image'''
     #load a smaller part from a larger fits image
-    optical_image = open_fits_file(f'{imdir}/{image}',verify_output='ignore')
+    optical_image = open_fits_file(f'{imdir}/{image}',single_hdu=True,verify_output='ignore')
    
-    try:
-        hdr = optical_image[0].header
-        data = optical_image[0].data
-    except:
-        try:
-            hdr = optical_image.header
-            data = optical_image.data
-        except:
-            return None
+
+    hdr = optical_image.header
+    data = optical_image.data
     opt_wcs= create_WCS(hdr)
     sizecut = [hdr_over['NAXIS1'], hdr_over['NAXIS2']]
     centralpix = [hdr_over['NAXIS1']/ 2., hdr_over['NAXIS2']/ 2.]
@@ -81,7 +141,7 @@ def cut_optical(cfg,hdr_over,wcs,imdir,image):
     except NoOverlapError:
         print_log(cfg,f'No overlap between the optical image and the SOFIA image',case=['verbose'])
         optical_cutout = None
-    optical_image.close()
+    close_variables(optical_image)
     return optical_cutout
 
 
@@ -107,8 +167,13 @@ def freq_smooth(cube, bin_size=0, smooth=0):
     return cube_new
 
 
-def get_background(cfg, match_header=None, wcs=None):   
-    optdir,optfile = os.path.split(cfg.internal.optical_background)
+def get_background(cfg, match_header=None, wcs=None, marker =False):
+    if wcs is None:
+        wcs = WCS(match_header)
+    if marker:
+        optdir,optfile = os.path.split(cfg.input.marker_images[0])
+    else:
+        optdir,optfile = os.path.split(cfg.internal.optical_background)
     optical = cut_optical(cfg,match_header,wcs,optdir,optfile)
     bckgrnd_wcs = optical.wcs
     bckgrnd = optical.data
@@ -249,11 +314,11 @@ Which means we use a basic masking radius of {radius_pixels} pixels.''',
 Created the star mask to the optical image.''',case=['screen'])
     return star_mask, False
 
-def mask_source_from_table(cfg,optical_markers,optical_header,mask=None, 
+def mask_source_from_table(cfg,optical_marker_image,mask=None, 
         src_table = None):
-    optical_wcs = create_WCS(optical_header)
+    optical_wcs = create_WCS(optical_marker_image.header)
     if mask is None:
-        masked_deb = np.full_like(optical_markers, 0)
+        masked_deb = np.full_like(optical_marker_image.data, 0)
     else: 
         masked_deb = copy.deepcopy(mask)
  
@@ -261,16 +326,12 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
 
         print_log(cfg,"No source table provided. Not adding to the mask"
             ,case=['verbose'])
-        return optical_markers
-    # input source table (e.g., SGA2020)
-    #src_table = Table(names=['ra', 'dec', 'PA', 'sma', 'e'],
-    #                data=np.array([[158.9368, -28.7691, 107.8, 23.8, 0.36], 
-    #                                [158.9026, -28.7686, 154.7, 24.7, 0.65]]))
-   
+        return optical_marker_image
+
     pixel_scale = proj_plane_pixel_scales(optical_wcs)[0] * u.deg
-    seg_start = np.max(optical_markers) if np.any(optical_markers) else 1
-    if 'PA' not in src_table.colnames:
-            
+    seg_start = np.max(optical_marker_image.data) if \
+        np.any(optical_marker_image.data) else 1
+    if 'PA' not in src_table.colnames:    
         print_log(cfg,"No PA column found in the source table. Adding a default PA column with 0 degrees."
             ,case=['debug'])
         src_table['PA'] = np.full(len(src_table), 0.) * u.deg
@@ -343,9 +404,9 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
         print_log(cfg,f"Processing source {src_table['RA'][i], src_table['DEC'][i]} with PA {src_table['PA'][i]}, sma {sma} and smb {smb}. Pixel coordinates {xcen, ycen}"
                 ,case=['debug'])    
         #if we have a source at the location we remove it for maximum control
-        if optical_markers[int(ycen),int(xcen)] != 0:
-            id = optical_markers[int(ycen),int(xcen)]
-            optical_markers[optical_markers == id] = 0
+        if optical_marker_image.data[int(ycen),int(xcen)] != 0:
+            id = optical_marker_image.data[int(ycen),int(xcen)]
+            optical_marker_image.data[optical_marker_image.data == id] = 0
             
         sma_pix = abs(sma.to(u.arcsec).value / pixel_scale.to(u.arcsec).value)
         smb_pix = abs(smb.to(u.arcsec).value / pixel_scale.to(u.arcsec).value)
@@ -360,10 +421,10 @@ def mask_source_from_table(cfg,optical_markers,optical_header,mask=None,
         ellipse = np.isfinite(xrot) & np.isfinite(yrot) & \
             ((xrot / sma_pix) ** 2 + (yrot / smb_pix) ** 2 <= 1)
      
-        optical_markers[ellipse] = source_counter + seg_start
+        optical_marker_image.data[ellipse] = source_counter + seg_start
         source_counter += 1
-    optical_markers[mask == 0] = 0
-    return optical_markers
+    optical_marker_image.data[mask == 0] = 0
+    return optical_marker_image
 
 
 def split_sources(cfg_in,cube_name, mask, 
@@ -439,7 +500,6 @@ def split_sources(cfg_in,cube_name, mask,
         counterparts = {}  
 
         for source in source_results: 
-            
             print_log(cfg,f''' For source {source['sofia_id'][0]} with velocity {source['sofia_v_sofia'][0]} we find:
 Manual Object Name = {source['Manual_Object Name'][0]} and it is spectroscopic {source['Manual_spectroscopic'][0]}
 INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscopic {source['INTERNET_spectroscopic'][0]} with velocity {source['INTERNET_Velocity'][0]}
@@ -449,7 +509,7 @@ INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscop
             if source['Manual_Object Name'][0] in [x for x in counterparts] or \
                 source['INTERNET_Object Name'][0] in [x for x in counterparts]:
                 source['Name'] =  source['sofia_name'][0]
-            elif (source['Manual_spectroscopic'] or not cfg.input.spectroscopic_manual_counterparts)\
+            elif (source['Manual_spectroscopic'] or not cfg.general.spectroscopic_manual_counterparts)\
                 and source['Manual_Object Name'][0] != 'NaN':
                 source['Name'] =  source['Manual_Object Name'][0]                    
             elif source['INTERNET_spectroscopic'] and \
@@ -488,24 +548,25 @@ INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscop
         if counter > 50:
             print_log(cfg,f"Warning: More than 50 matching counterparts for {name}.", case=['verbose'])
             matched = True 
-        maskin= open_fits_file(f"{outdir}/Sofia_Output/tmp_mask.fits",verify_output='ignore')       
+        maskin= open_fits_file(f"{outdir}/Sofia_Output/tmp_mask.fits",
+            single_hdu=True,verify_output='ignore')       
        
         #Checkin what we have
-        print_log(cfg,f"Found {np.unique(maskin[0].data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
+        print_log(cfg,f"Found {np.unique(maskin.data).size-1} sources in the mask. Found {len(id)} sources with a counterpart in the catalogue."
             , case=['verbose'])            
         if len(id) == len(sources_to_split):
             print_log(cfg,f"The id and split_sources lengths match. No further deblending needed.", case=['verbose'])
             matched = True
-        elif np.unique(maskin[0].data).size-1 == 1:
-            print_log(cfg,f"Only one source found in the mask {mask}. No deblending needed.", case=['verbose'])
+        elif np.unique(maskin.data).size-1 == 1:
+            print_log(cfg,f"Only one source found in the mask {maskin.data}. No deblending needed.", case=['verbose'])
             matched = True
         else:
-            print_log(cfg,f'''The mask has the following source {np.unique(maskin[0].data)}
+            print_log(cfg,f'''The mask has the following source {np.unique(maskin.data)}
 the counterparts map {counterparts}''', case=['verbose'])
             for pair in replace_id:
                 print_log(cfg,f"Replacing source {pair[0]} with {pair[1]} in the mask.", case=['verbose'])
-                maskin[0].data[maskin[0].data == pair[0]] = pair[1]
-            write_fits_file(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin[0].data,maskin[0].header,
+                maskin.data[maskin.data == pair[0]] = pair[1]
+            write_fits_file(f'{outdir}/Sofia_Output/tmp_mask.fits',maskin.data,maskin.header,
                  overwrite=True,output_verify='ignore')
        
     # Copying the final mask to the output directory 
@@ -513,7 +574,7 @@ the counterparts map {counterparts}''', case=['verbose'])
 
     # Determine whether we need to split
     try:
-        if np.unique(maskin[0].data).size-1 == 1 or counter  > 50:
+        if np.unique(maskin.data).size-1 == 1 or counter  > 50:
             ret_val= False
         else:
             ret_val = True
