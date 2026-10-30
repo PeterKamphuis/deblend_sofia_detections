@@ -160,6 +160,7 @@ def build_source_chunks(cfg, sources, max_chunk_size):
 
 def creating_full_FOV_optical(cfg):
     cfFOV_start =  datetime.now() 
+    markers = set([x.lower() for x in cfg.input.markers])
     print_log(cfg, f'Starting full FOV optical image creation at {cfFOV_start}', case=['verbose','screen'])
     SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/basicform.pl'
     #SkyView.URL = 'https://skyview.gsfc.nasa.gov/current/cgi/query.pl'
@@ -173,8 +174,9 @@ def creating_full_FOV_optical(cfg):
 
     obj_coords, size_quantity, size_pixels,image_boundaries = get_cutout_region(cfg,
         mom0_header=mom0_header,mom0_wcs=mom0_wcs)
-    if not cfg.input.optical_images[0] is None:
-        
+    #------------------if we have manual images we use these------------------
+    manual_images = set(['optical image', 'cleaned optical image'])
+    if len(markers.intersection(manual_images)) > 0:      
         print_log(cfg, f'Checking manual input', case=['verbose'])
         for identifier in cfg.input.optical_images:
             if os.path.isfile(identifier):
@@ -189,55 +191,53 @@ def creating_full_FOV_optical(cfg):
             cutout_hdr = cutout.wcs.to_header()
             cutout_hdr['COMMENT'] =  f'The original file was  {identifier}'
             write_fits_file(cfg.internal.optical_background,cutout.data,cutout_hdr,overwrite=True)
-
-            return
-    print_log(cfg, f'''Obtaining the actual image list with the following parameters:
+    #----------------------- Internet image retrieval -----------------------
+    if 'internet image' in markers:
+        print_log(cfg, f'''Obtaining the actual image list with the following parameters:
 object coordinates: {obj_coords.to_string('hmsdms')},
 radius: {size_quantity},
 pixels: {size_pixels},''', case=['verbose'])
-    
-    if cfg.general.clear_internet_cache:
-        SkyView.clear_cache()
-    sky_view_list = SkyView.get_image_list(position=obj_coords,
-                                radius = size_quantity,
-                                coordinates = "J2000",
-                                pixels = size_pixels,
-                                cache=True,
-                                #survey=['WISE 3.4'])
-                                #survey=['2MASS-K'])
-                                survey=['DSS2 Red'])
+        
+        if cfg.general.clear_internet_cache:
+            SkyView.clear_cache()
+        print_log(cfg, f'Getting image from {cfg.general.sky_survey}', case=['verbose','screen'])
+        sky_view_list = SkyView.get_image_list(position=obj_coords,
+                                    radius = size_quantity,
+                                    coordinates = "J2000",
+                                    pixels = size_pixels,
+                                    cache=True,
+                                    survey=list(cfg.general.sky_survey))
 
 
-    print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
-{sky_view_list}
-''', case=['verbose'])
-    for path in sky_view_list:
-        print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
+        print_log(cfg, f'''Obtained {len(sky_view_list)} images from SkyView
+    {sky_view_list}
+    ''', case=['verbose'])
+        for path in sky_view_list:
+            print_log(cfg, f'''Starting the download for {cfg.sofia.original_data_cube}.
 This can take a while.''', case=['verbose'])
-        filename = path.split("/")[-1]
-        print_log(cfg, f'Downloading {filename} from SkyView from {path}')
-        urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
-        if os.path.isfile(f'{cfg.internal.optical_background}'):
-            print_log(cfg, "Successfully downloaded the image")
-            #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
-        else:
-            print_log(cfg, "Failed to obtain the image from SkyView")
-            raise DownloadError(f'''Failed to download the image from SkyView: {path}
+            filename = path.split("/")[-1]
+            print_log(cfg, f'Downloading {filename} from SkyView from {path}')
+            urllib.request.urlretrieve(path, f'{cfg.internal.optical_background}')
+            if os.path.isfile(f'{cfg.internal.optical_background}'):
+                print_log(cfg, "Successfully downloaded the image")
+                #os.replace(filename, f'{cfg.internal.ancillary_directory}moment0_full_DSS.fits')
+            else:
+                print_log(cfg, "Failed to obtain the image from SkyView")
+                raise DownloadError(f'''Failed to download the image from SkyView: {path}
 Check your internet connection and the SkyView service status.
 Note that redownloading the exact same image may fail if it has recently been removed from the SkyView archive.
 ''')
     cfFOV_end = datetime.now()
     print_log(cfg, f'Finished full FOV optical image creation at {cfFOV_end}', case=['verbose','screen'])
     print_log(cfg, f'Total time taken: {cfFOV_end - cfFOV_start}', case=['verbose','screen'])
-
+'''
 def gaia_query_with_retries(coord,size):
 
-    query = f'''SELECT ra,dec,phot_rp_mean_mag FROM gaiadr3.gaia_source 
+    query = f''SELECT ra,dec,phot_rp_mean_mag FROM gaiadr3.gaia_source 
 WHERE ra BETWEEN 180 AND 180.2 AND dec BETWEEN 10.1 AND 10.3 ORDER BY 
-phot_rp_mean_mag'''
+phot_rp_mean_mag''
     job = Gaia.launch_job(query,dump_to_file=False)
 
-'''
 def download_gaia_table(cfg,runtime_ctx=None):
     dgf_start = datetime.now()
     print_log(cfg, f'Starting Gaia table download at {dgf_start}', case=['verbose','screen'])

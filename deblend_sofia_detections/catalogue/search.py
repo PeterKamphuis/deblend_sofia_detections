@@ -49,8 +49,9 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
         with open(f'{cfg.internal.simbad_table}', 'rb') as tmp:
             search_table = pickle.load(tmp)
     elif table_source.upper() == 'MANUAL':
-        if cfg.input.tables[0] is None:
+        if cfg.input.tables[0].lower() == 'none':
             return  QTable()
+        print_log(cfg, f'Reading the manual tables {cfg.input.tables}.', case=['verbose'])
         search_table = read_manual_table(cfg)
        
     else:
@@ -183,7 +184,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
                 get_ned_requested_metadata(include_extra=True)
         
         if query.upper() == 'MANUAL':
-            if cfg.input.tables[0] is None:
+            if cfg.input.tables[0].lower() == 'none':
                 manual_table = QTable(names=['Object Name'],dtype=['str'])
             else:
                 manual_table = read_manual_table(cfg,need_velocity=True)
@@ -210,7 +211,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
         dummy_table.add_row(requested_values)
         final_row = combine_tables(dummy_table,source,column_indicators=[search_id,insource])
         final_row[f'{search_id}_spectroscopic'] = False
-   
+       
     # We always want to return a table, even if it is empty, so we check if the final row is a table and if not we return the dummy table
     if not isinstance(final_row, (QTable,Table)):
         raise InputError(f'We expected a table but got {type(final_row)}')

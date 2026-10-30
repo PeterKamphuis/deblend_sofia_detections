@@ -118,8 +118,7 @@ def combine_marker_images(marker_image_1, marker_image_2, mode='add'):
         out_image.data = combined_data
     except Exception as e:
         print(f"Error updating output image data: {e}")
-        raise
-    out_image.data = combined_data
+        raise RuntimeError(f"Error updating output image data: {e}")
     return out_image
 
 def cut_optical(cfg,hdr_over,wcs,imdir,image):
@@ -501,7 +500,6 @@ def split_sources(cfg_in,cube_name, mask,
         counterparts = {}  
 
         for source in source_results: 
-            
             print_log(cfg,f''' For source {source['sofia_id'][0]} with velocity {source['sofia_v_sofia'][0]} we find:
 Manual Object Name = {source['Manual_Object Name'][0]} and it is spectroscopic {source['Manual_spectroscopic'][0]}
 INTERNET Object Name = {source['INTERNET_Object Name'][0]} and it is spectroscopic {source['INTERNET_spectroscopic'][0]} with velocity {source['INTERNET_Velocity'][0]}

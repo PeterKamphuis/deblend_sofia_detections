@@ -310,7 +310,7 @@ def load_table(table_in,fresh_read=False,cfg=None,pickle_output=None):
 def read_manual_table(cfg, need_velocity =True):    
     manual_table = None
     for table_in in cfg.input.tables:
-        if table_in is None:
+        if table_in.lower() == 'none':
             manual_table = QTable()
             continue
         if not os.path.isfile(table_in):
@@ -323,6 +323,8 @@ def read_manual_table(cfg, need_velocity =True):
             manual_table = manual_table_small
         else:
             manual_table = combine_tables(manual_table,manual_table_small)  
+    if check_table_length(manual_table) == 0:
+        return manual_table
     
     if 'velocity' not in [x.lower() for x in manual_table.colnames]\
         and need_velocity:

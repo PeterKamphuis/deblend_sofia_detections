@@ -564,6 +564,7 @@ def deblend_sofia_detections(cfg, runtime_ctx=None):
 def detect_optical_sources(cfg,mask=None):
     """Detect sources in the optical image to use as markers for the watershed algorithm."""
     optical_image = open_fits_file(cfg.internal.cleaned_optical_background,single_hdu=True)
+  
     # do not name n_sigma/nsigma as its name changes in v3.0.0 of photutils
     threshold_smooth = detect_threshold(optical_image.data, 3,background= 0.0)
     
@@ -613,7 +614,9 @@ def detect_optical_sources(cfg,mask=None):
             segm_deblend.data, optical_image.header, overwrite=True)
         cfg.internal.image_counter += 1
 
-    masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
+    #masked_deb = np.ma.masked_array(segm_deblend, np.abs(segm_deblend) < 1e-8)
+    masked_deb = np.array(segm_deblend)
+    masked_deb[abs(masked_deb) < 1e-8] = 0.
     optical_image.data = masked_deb
     return optical_image,hi_mask
 def obtain_ancillary_data(cfg,sources=None):
@@ -1019,14 +1022,13 @@ def set_non_peak_markers(cfg,deblend_data, mask,outdir= None):
         search_table = combine_tables(search_table, manual_table)
     elif check_table_length(manual_table) > 0:
         search_table = copy.deepcopy(manual_table)
-    
     if check_table_length(search_table) > 0:   
         optical_marker_image = mask_source_from_table(cfg, detected_optical_markers_image,
             src_table=search_table,
             mask= used_mask) 
     else:
         optical_marker_image = detected_optical_markers_image
-  
+    
     if 'marker image' in req_markers:
         # the provided marker image is likely for the full FOV where as we are working on the sources.
         marker_image, marker_wcs = get_background(cfg, match_header= deblend_data.header, 
@@ -1193,7 +1195,7 @@ We will not deblend it again as this leads to different and unreliable results.'
         else:
             previous_deblend = None
 
-        results['Peak Sources'] = deblend_on_peaks(cfg, to_deblend, mask=mask, outdir=outdir,
+        results['Peak Sources'] = deblend_on_peaks(cfg, deblend_data, mask=mask, outdir=outdir,
             previous_deblend=previous_deblend,source_id=sofia_id)
   
     final_mask_name = obtain_final_mask(cfg,deblend_file_name, results,outdir=outdir)
@@ -1219,7 +1221,7 @@ Which is based on the following deblending results: {results}''',case=['verbose'
                 f'{cfg.sofia.directory}/{cfg.sofia.original_mask}',
                 final_mask_name = f'{outdir}final_mask.fits',id = sofia_id)
             fin_str = f'''We found {check_table_length(sources_table)} sources in the deblended mask'''
-
+            results['Counter Parts'] = [True, check_table_length(sources_table)]
         else:
             print_log(cfg, f"We're not splitting as we could not find any counterparts to the sources.", case=['verbose','screen'])
             fin_str= f'''We did not find any counterparts to the sources for the split sources
@@ -1227,7 +1229,6 @@ Thus we do not deblend.'''
         if  'ALL' in cfg.logging.debug_functions or 'WATERSHED_DEBLENDING' in cfg.logging.debug_functions:
             pass
         else:
-            print(f"Cleaning up intermediate files in {outdir}")
             shutil.rmtree(f'{outdir}/Sofia_Output')
           
         

@@ -13,6 +13,8 @@ import shutil
 import sys
 import copy
 import deblend_sofia_detections
+import numpy as np
+import warnings
 try:
     from importlib.resources import files as import_pack_files
 except ImportError:
@@ -75,7 +77,7 @@ If you want to provide a config file please give the correct name.
 Else press CTRL-C to abort.
 configuration_file = ''')
     cfg = OmegaConf.merge(cfg,inputconf) 
-  
+   
     #open the input parameter file to obtain the data cube and output locations
   
     if single_cube:
@@ -111,7 +113,7 @@ def check_all_required_inputs(cfg):
                     raise InputError(f"Invalid peak type: {tmp[1]}")
                 try:
                     num_peaks = int(tmp[0])
-                    cfg.internal.maximum_no_peaks = np.nanmax([num_peaks, cfg.internal.maximum_no_peaks])
+                    cfg.internal.maximum_no_peaks = int(np.nanmax([num_peaks, cfg.internal.maximum_no_peaks]))
                 except ValueError:
                     raise InputError(f"Invalid format for 'peaks' marker: {marker}")
             else:
@@ -161,8 +163,15 @@ def check_debug_functions(cfg):
     return cfg
 
 def check_internet(cfg):
-    to_download = {'gaia': True, 'ned': True, 'simbad': True}
-    
+
+    download_options = ['gaia','ned','simbad']
+    to_download = {}
+    for x in cfg.general.internet_repository:
+        if x.lower() not in download_options:
+            print(f"Warning: {x} is not a recognized download option.")
+        else:
+            to_download[x.lower()] = True
+   
     if not cfg.general.internet:
         print(f"Internet access is disabled in the configuration.")
         for x in to_download:
@@ -185,6 +194,7 @@ def check_internet(cfg):
                 setattr(cfg.internal, f'{x}_table', \
                     f'{cfg.directories.ancillary_directory}/tables/cached_{x}_table.pkl')
             else:
+                print(f"No cached table found for {x}.")
                 setattr(cfg.internal, f'{x}_table', 'none')
                 cfg.general.internet_repository.remove(x.upper())
     return cfg
@@ -209,10 +219,10 @@ def check_single_cube_input(cfg):
         # check that the cube exists
         if not os.path.isfile(join_path(cfg.directories.data_directory,cfg.sofia.original_data_cube)):
             raise InputError(f'''The data cube {cfg.sofia.original_data_cube} does not exist in the directory {cfg.directories.data_directory}. Please provide a correct data cube and directory.''')   
-        print()
+     
         if cfg.sofia.basename == '':
             cfg.sofia.basename = os.path.splitext(cfg.sofia.original_data_cube)[0].split('_cube')[0]
-        # in this case the dta_directory and the sofia_directory have to be hthe same
+        # in this case the dta_directory and the sofia_directory have to be hthe same    
         if cfg.sofia.directory == '':
             cfg.sofia.directory = cfg.directories.data_directory
         cube_ext= os.path.splitext(cfg.sofia.original_data_cube)[1]
@@ -235,6 +245,10 @@ def check_single_cube_input(cfg):
         file,ext2 = os.path.splitext(file)
         ext = ext2 + ext
     use_mask = f'{file}_deblended{ext}'
+    print(f'Using mask file {use_mask}')
+    print(f'Original mask file {cfg.sofia.original_mask}')
+    print(f'directory {cfg.sofia.directory}')
+    print(join_path(cfg.sofia.directory,cfg.sofia.original_mask),join_path(cfg.sofia.directory,use_mask))
     shutil.copyfile(join_path(cfg.sofia.directory,cfg.sofia.original_mask),join_path(cfg.sofia.directory,use_mask))
     cfg.sofia.original_mask = use_mask
     return cfg
@@ -323,21 +337,51 @@ def read_parameter_input(cfg):
         
     parameters = load_sofia_input_file(f'{cfg.sofia.parameter_path}/{cfg.sofia.parameter_file}')
     data_path,data_file = os.path.split(parameters['input.data'])
-    if data_path == '' or data_path[0] != '/':
-        cfg.directories.data_directory = join_path(
-            input_pathname,data_path)
+    if cfg.directories.data_directory == '':
+        if data_path == '' or data_path[0] != '/':
+            cfg.directories.data_directory = join_path(
+                input_pathname,data_path)
+        else:
+            cfg.directories.data_directory = join_path(data_path)
     else:
-        cfg.directories.data_directory = join_path(data_path)
+        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+Data directory is set to: {cfg.directories.data_directory} by user.
+Not applying automatic data directory setting from parameter file.
+{''.join(['-']*80)}\n''')
    
-    cfg.sofia.original_data_cube = data_file
-    cfg.sofia.basename = parameters['output.filename']
+    if cfg.sofia.original_data_cube == '':
+        cfg.sofia.original_data_cube = data_file
+    else:
+        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+Original data cube is set to: {cfg.sofia.original_data_cube} by user.
+Not applying automatic original data cube setting from parameter file.
+{''.join(['-']*80)}\n''')
     if cfg.sofia.basename == '':
-        cfg.sofia.basename = os.path.splitext(data_file)[0]
-    cfg.sofia.directory = join_path( cfg.directories.data_directory 
-                                    , parameters['output.directory'])
+        cfg.sofia.basename = parameters['output.filename']
+        if cfg.sofia.basename == '':
+            cfg.sofia.basename = os.path.splitext(data_file)[0]
+    else:
+        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+Basename is set to: {cfg.sofia.basename} by user.
+Not applying automatic basename setting from parameter file.
+{''.join(['-']*80)}''')
+
+    if cfg.sofia.directory == '':
+        cfg.sofia.directory = join_path( cfg.directories.data_directory 
+                                        , parameters['output.directory'])
+    else:
+        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+Sofia directory is set to: {cfg.sofia.directory} by user.
+Not applying automatic directory setting from parameter file.
+{''.join(['-']*80)}\n''')    
 
     if cfg.sofia.original_mask == '':
         cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask.fits'
+    else:
+        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+Original mask is set to: {cfg.sofia.original_mask} by user.
+Not applying automatic original mask setting from parameter file.
+{''.join(['-']*80)}\n''')
     
     
     return cfg

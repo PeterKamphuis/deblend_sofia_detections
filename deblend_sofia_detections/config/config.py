@@ -23,7 +23,8 @@ class Input:
     # The following create a new marker image to start the watershed from, however if the previous markers resulted 
     # in a succesful watershed with multiple sources,the peak markers will retain the marker id's.  
     # g) #no HI peaks: Get markers with the beam width at the highest HI peaks in the cube inside the mask, the number of peak == #no of markers
-    # h) #no moment0 peaks: Get markers with the beam width at the highest moment0 peaks in the moment0 inside the mask, the number of peak == #no of markers
+    # If general.deblend_dimension is set to '2D', the peak markers will be determined in the moment0 map.
+    # If general.deblend_dimension is set to '3D', the peak markers will be determined in the full data cube.
     # The peak deblending is a seperate (second if any previous markers were defined) watershed call.
     # To reproduce the original redults from Qifeng+ 2025 One would set input.markers: ['Internet Image', '5 HI peaks']
     # This means, the deblending will use optical markers from the internet image and deblend the 5 HI peaks based on the optical deblend.
@@ -115,11 +116,11 @@ class General:
     # Note that GAIA is used to mask stars in the optical image if 
     # it is not specified the stars will not be masked.
    
-    internet_repository: List[str] = field(default_factory=lambda: ['GAIA','NED','SIMBAD'])  
+    internet_repository: List = field(default_factory=lambda: ['GAIA','NED','SIMBAD'])  
 
     #the sky survey to download an optincal image from
-    # For the options are 'DSS' 
-    sky_survey: str = 'DSS'  
+    # For the options are listed in astroqueries skyview module.
+    sky_survey:  List[str] = field(default_factory=lambda: ['DSS2 Red'])  
 
     # If True we will clear any tables we find in ancillary_data that are from 
     # previous runs of the code. This can be useful if the user wants to 
