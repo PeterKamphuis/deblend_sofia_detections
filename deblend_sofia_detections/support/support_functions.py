@@ -1,4 +1,4 @@
-from deblend_sofia_detections.support.profiling import profile
+from deblend_sofia_detections.support.profiling import profile,profiler_directory
 
 from deblend_sofia_detections.support.errors import InputError,UnitError,\
     RegriddingError
@@ -344,7 +344,7 @@ def isquantity(value):
        
     return verdict
 
-@profile('profiler_logs/match_size.log')
+@profile(f'{profiler_directory}match_size.log')
 def match_size(matcharray, inarray,max=False):
     """
     Match the size of inarray to matcharray by regridding.

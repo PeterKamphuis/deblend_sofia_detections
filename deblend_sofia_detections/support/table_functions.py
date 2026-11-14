@@ -415,7 +415,6 @@ def read_text_table(cfg,file,seperator=' '):
                     sources = QTable(names=input_columns,units=convert_units,dtype=dtypes)
                        
         else:
-           
             construct_row=[]
             name = tmp[input_columns.index('Name')]
             for i,col in enumerate(input_columns):

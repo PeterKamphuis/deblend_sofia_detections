@@ -53,7 +53,7 @@ def find_counterpart(cfg,source,header_info, sysrange=None, table_source='NED',
             return  QTable()
         print_log(cfg, f'Reading the manual tables {cfg.input.tables}.', case=['verbose'])
         search_table = read_manual_table(cfg)
-       
+            
     else:
         raise InputError(f'Unknown table source {table_source}. Please use NED, SIMBAD or MANUAL.')
     prefix = ''
@@ -162,6 +162,7 @@ def search_counter_part(cfg,source,sofia_directory= './',
         spectroscopic_table = find_counterpart(cfg,source, header_info,
             sysrange=150.*u.km/u.s,table_source='MANUAL',
             spectroscopic=cfg.general.spectroscopic_manual_counterparts)
+     
         search_id = 'Manual'
         pref = 'sofia_'
         
