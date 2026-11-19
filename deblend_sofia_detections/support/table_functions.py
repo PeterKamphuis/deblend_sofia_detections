@@ -5,7 +5,7 @@ from deblend_sofia_detections.support.support_functions import\
     is_real_unit, isquantity, translate_string_to_unit, convertRADEC
 from deblend_sofia_detections.support.logging import print_log
 from astropy import units as u
-from astropy.table import QTable,Table,Row
+from astropy.table import QTable,Table,Row,Column
 
 import copy
 import os
