@@ -12,6 +12,7 @@ from deblend_sofia_detections.config.functions import setup_config
 from deblend_sofia_detections.deblending.deblending import deblend_sofia_detections, \
     deblend_single_detection
 from deblend_sofia_detections.support.profiling import profile
+
 from multiprocessing import BoundedSemaphore
 import sys
 import traceback

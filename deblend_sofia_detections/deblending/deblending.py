@@ -1,3 +1,4 @@
+
 from deblend_sofia_detections.catalogue.download import creating_full_FOV_optical,\
     download_internet_table,_tracked_gate,_NULL_GATE,\
     _QUERY_RUN_COUNTER
@@ -1207,8 +1208,16 @@ Which is based on the following deblending results: {results}''',case=['verbose'
     sources_table = None
     if not final_mask_name is None:  
         print_log(cfg, f"Splitting the sources in the final mask {final_mask_name} for the cube {cube_name}.", case=['verbose'])
-        stil_split,sources_table = split_sources(cfg,cube_name, final_mask_name, 
-            outdir=outdir,catalogue=cfg.logging.save_counterpart_table)  
+        if not cfg.general.counterpart_region.lower() == 'no counterpart':
+            stil_split,sources_table = split_sources(cfg,cube_name, final_mask_name, 
+                outdir=outdir,catalogue=cfg.logging.save_counterpart_table)  
+        else:
+            # Copying the final mask to the output directory 
+            print(final_mask_name,outdir)
+            shutil.copy2(f'{final_mask_name}',f'{outdir}final_mask.fits')    
+            
+            stil_split = True
+            sources_table = None    
         # skip the background
         # If we are running as a larger sofia run update the catalogue and cubelets
         if stil_split:
@@ -1229,7 +1238,8 @@ Thus we do not deblend.'''
         if  'ALL' in cfg.logging.debug_functions or 'WATERSHED_DEBLENDING' in cfg.logging.debug_functions:
             pass
         else:
-            shutil.rmtree(f'{outdir}/Sofia_Output')
+            if os.path.isdir(f'{outdir}/Sofia_Output'):
+                shutil.rmtree(f'{outdir}/Sofia_Output')
           
         
     else:

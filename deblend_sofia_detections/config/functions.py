@@ -344,7 +344,8 @@ def read_parameter_input(cfg):
         else:
             cfg.directories.data_directory = join_path(data_path)
     else:
-        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+        if cfg.logging.enable:   
+            warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
 Data directory is set to: {cfg.directories.data_directory} by user.
 Not applying automatic data directory setting from parameter file.
 {''.join(['-']*80)}\n''')
@@ -352,7 +353,8 @@ Not applying automatic data directory setting from parameter file.
     if cfg.sofia.original_data_cube == '':
         cfg.sofia.original_data_cube = data_file
     else:
-        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+        if cfg.logging.enable:   
+            warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
 Original data cube is set to: {cfg.sofia.original_data_cube} by user.
 Not applying automatic original data cube setting from parameter file.
 {''.join(['-']*80)}\n''')
@@ -361,7 +363,8 @@ Not applying automatic original data cube setting from parameter file.
         if cfg.sofia.basename == '':
             cfg.sofia.basename = os.path.splitext(data_file)[0]
     else:
-        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+        if cfg.logging.enable:   
+            warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
 Basename is set to: {cfg.sofia.basename} by user.
 Not applying automatic basename setting from parameter file.
 {''.join(['-']*80)}''')
@@ -370,7 +373,8 @@ Not applying automatic basename setting from parameter file.
         cfg.sofia.directory = join_path( cfg.directories.data_directory 
                                         , parameters['output.directory'])
     else:
-        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+        if cfg.logging.enable:   
+            warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
 Sofia directory is set to: {cfg.sofia.directory} by user.
 Not applying automatic directory setting from parameter file.
 {''.join(['-']*80)}\n''')    
@@ -378,7 +382,8 @@ Not applying automatic directory setting from parameter file.
     if cfg.sofia.original_mask == '':
         cfg.sofia.original_mask = f'{cfg.sofia.basename}_mask.fits'
     else:
-        warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
+        if cfg.logging.enable:   
+            warnings.warn(f'''{''.join(['-']*30)} Warning! {''.join(['-']*30)}
 Original mask is set to: {cfg.sofia.original_mask} by user.
 Not applying automatic original mask setting from parameter file.
 {''.join(['-']*80)}\n''')

@@ -10,12 +10,13 @@ from deblend_sofia_detections.support.logging import print_log
 from deblend_sofia_detections.support.table_functions import check_table_length
 from deblend_sofia_detections.support.support_functions import get_ned_requested_metadata,\
     get_fits_header,write_fits_file
-from astropy import units as u
 
+from astropy import units as u
 from astroquery.skyview import SkyView
 from astropy.coordinates import SkyCoord
 from astropy.wcs import WCS
 from astropy.table import QTable, Column,vstack,unique
+
 from xml.parsers.expat import ExpatError
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
